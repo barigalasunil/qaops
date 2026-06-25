@@ -1,0 +1,6 @@
+{
+  "name": "QA Hub",
+  "description": "A centralised QA metrics and team tracking repository for managing projects, squads, and releases.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
