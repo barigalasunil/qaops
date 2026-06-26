@@ -80,12 +80,13 @@ interface StatCardProps {
   label: string;
   accentColor: string;
   subLabel?: string;
+  subLabelColor?: string;
   theme: ThemeTokens;
   isPercentage?: boolean;
   animationIndex?: number;
 }
 
-export function StatCard({ value, label, accentColor, subLabel, theme, isPercentage, animationIndex }: StatCardProps) {
+export function StatCard({ value, label, accentColor, subLabel, subLabelColor, theme, isPercentage, animationIndex }: StatCardProps) {
   const finalColor = useMemo(() => {
     if (isPercentage && typeof value === 'number') {
       if (value >= 80) return theme.green;
@@ -119,7 +120,7 @@ export function StatCard({ value, label, accentColor, subLabel, theme, isPercent
         {typeof value === 'number' && isPercentage ? `${value.toFixed(1)}%` : value}
       </div>
       {subLabel && (
-        <div style={{ fontSize: '11px', color: theme.muted, marginTop: '4px' }}>
+        <div style={{ fontSize: '11px', color: subLabelColor || theme.muted, marginTop: '4px', fontWeight: subLabelColor ? 800 : 500 }}>
           {subLabel}
         </div>
       )}
@@ -183,7 +184,7 @@ export function Field({
           required={required}
           disabled={disabled}
           style={{
-            ...commonStyles.input(theme),
+            ...commonStyles.select(theme, true),
             borderColor: error ? '#ef4444' : theme.border,
             opacity: disabled ? 0.6 : 1,
             cursor: disabled ? 'not-allowed' : 'default',
@@ -287,12 +288,12 @@ export function FilterBar({ projects, squads, dataEntries, defects, releaseNames
       </div>
 
       {/* Project Selector */}
-      {showProject && <div style={{ flex: 1, minWidth: '130px' }}>
+      {showProject && <div style={{ flex: '0 1 auto', minWidth: '120px' }}>
         <label style={{ ...commonStyles.label(theme), fontSize: '10px', marginBottom: '2px' }}>Project</label>
         <select
           value={filters.projectId}
           onChange={(e) => setFilters(prev => ({ ...prev, projectId: e.target.value }))}
-          style={commonStyles.input(theme)}
+          style={commonStyles.select(theme)}
         >
           <option value="">All Projects</option>
           {projects.map(p => (
@@ -302,12 +303,12 @@ export function FilterBar({ projects, squads, dataEntries, defects, releaseNames
       </div>}
 
       {/* Squad Selector */}
-      <div style={{ flex: 1, minWidth: '130px' }}>
+      <div style={{ flex: '0 1 auto', minWidth: '120px' }}>
         <label style={{ ...commonStyles.label(theme), fontSize: '10px', marginBottom: '2px' }}>Squad</label>
         <select
           value={filters.squadId}
           onChange={(e) => setFilters(prev => ({ ...prev, squadId: e.target.value }))}
-          style={commonStyles.input(theme)}
+          style={commonStyles.select(theme)}
         >
           <option value="">All Squads</option>
           {squads.filter(s => !filters.projectId || !s.projectId || s.projectId === filters.projectId).map(s => (
@@ -317,12 +318,12 @@ export function FilterBar({ projects, squads, dataEntries, defects, releaseNames
       </div>
 
       {/* Release Selector */}
-      <div style={{ flex: 1, minWidth: '130px' }}>
+      <div style={{ flex: '0 1 auto', minWidth: '120px' }}>
         <label style={{ ...commonStyles.label(theme), fontSize: '10px', marginBottom: '2px' }}>Release</label>
         <select
           value={filters.release}
           onChange={(e) => setFilters(prev => ({ ...prev, release: e.target.value }))}
-          style={commonStyles.input(theme)}
+          style={commonStyles.select(theme)}
         >
           <option value="">All Releases</option>
           {distinctReleases.map(r => (
@@ -332,12 +333,12 @@ export function FilterBar({ projects, squads, dataEntries, defects, releaseNames
       </div>
 
       {/* Month Selector */}
-      <div style={{ flex: 1, minWidth: '130px' }}>
+      <div style={{ flex: '0 1 auto', minWidth: '120px' }}>
         <label style={{ ...commonStyles.label(theme), fontSize: '10px', marginBottom: '2px' }}>Month</label>
         <select
           value={filters.month}
           onChange={(e) => setFilters(prev => ({ ...prev, month: e.target.value }))}
-          style={commonStyles.input(theme)}
+          style={commonStyles.select(theme)}
         >
           <option value="">All Months</option>
           {distinctMonths.map(m => {

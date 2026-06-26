@@ -6,7 +6,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { ThemeTokens, commonStyles } from '../theme';
 import { AppState, CustomField, Project, Squad, User, UserPermissions } from '../types';
-import { generateId, getPermissionsForRole, hashPassword, sanitise } from '../utils';
+import { exportToCSV, generateId, getPermissionsForRole, hashPassword, sanitise } from '../utils';
 import { Field } from './Shared';
 import { PermissionsTable } from './PermissionsTable';
 import { Plus, Trash2, Shield, UserX, UserCheck, Key, Settings as SettingsIcon, X } from 'lucide-react';
@@ -23,7 +23,7 @@ interface SettingsProps {
 
 export function Settings({ currentUser, appState, setAppState, showToast, theme, readOnly = false, onUpdateCurrentUser }: SettingsProps) {
   // Tabs: "users" | "projects" | "squads" | "fields"
-  const [activeTab, setActiveTab] = useState<'users' | 'projects' | 'squads' | 'fields'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'projects' | 'squads' | 'fields' | 'audit'>('users');
 
   // Input states for My Account
   const [editAccountForm, setEditAccountForm] = useState({
@@ -35,6 +35,7 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
   const [resetPasswordUser, setResetPasswordUser] = useState<User | null>(null);
   const [resetPasswordForm, setResetPasswordForm] = useState({ password: '', confirm: '' });
   const [resetPasswordErrors, setResetPasswordErrors] = useState<Record<string, string>>({});
+  const [auditFilters, setAuditFilters] = useState({ user: '', action: '', from: '', to: '' });
   const updateAccountForm = (key: keyof typeof editAccountForm, value: string) => {
     setEditAccountForm(previous => ({ ...previous, [key]: value }));
     setAccountErrors(previous => {
@@ -51,6 +52,8 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
     role: 'member' as User['role'],
     squadId: '',
     projectId: '',
+    reportsTo: '',
+    jobTitle: '',
   });
   const [userErrors, setUserErrors] = useState<Record<string, string>>({});
   const updateUserForm = (key: keyof typeof userForm, value: any, extras: Partial<typeof userForm> = {}) => {
@@ -118,6 +121,26 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
       .map(s => ({ value: s.id, label: s.name }));
   }, [appState.squads, currentUser.projectId, isAdmin, userForm.projectId]);
 
+  const reportsToOptions = useMemo(() => {
+    const projectId = isAdmin ? currentUser.projectId : userForm.projectId;
+    if (userForm.role === 'member') {
+      return appState.users
+        .filter(user => user.role === 'lead' && (!projectId || user.projectId === projectId))
+        .map(user => ({ value: user.id, label: `${user.username}${user.jobTitle ? ` - ${user.jobTitle}` : ''}` }));
+    }
+    if (userForm.role === 'lead') {
+      return appState.users
+        .filter(user => user.role === 'admin' && (!projectId || user.projectId === projectId))
+        .map(user => ({ value: user.id, label: `${user.username}${user.jobTitle ? ` - ${user.jobTitle}` : ''}` }));
+    }
+    if (userForm.role === 'admin') {
+      return appState.users
+        .filter(user => user.role === 'superadmin')
+        .map(user => ({ value: user.id, label: user.username }));
+    }
+    return [];
+  }, [appState.users, currentUser.projectId, isAdmin, userForm.projectId, userForm.role]);
+
   const visibleUsers = useMemo(() => (
     isSuperAdmin
       ? appState.users
@@ -153,6 +176,7 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
     if (!userForm.role || !allowedRoles.includes(userForm.role)) nextErrors.role = 'Role is required.';
     if ((userForm.role === 'lead' || userForm.role === 'member') && !(isAdmin ? currentUser.projectId : userForm.projectId)) nextErrors.projectId = 'Project is required.';
     if (userForm.role === 'member' && !userForm.squadId) nextErrors.squadId = 'Squad is required.';
+    if (userForm.role !== 'superadmin' && !userForm.reportsTo) nextErrors.reportsTo = 'Direct manager is required.';
     setUserErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
 
@@ -177,11 +201,38 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
       loginCount: 0,
       failedLoginAttempts: 0,
       lockedUntil: null,
+      reportsTo: userForm.role === 'superadmin' ? null : userForm.reportsTo,
+      directReports: [],
+      jobTitle: sanitise(userForm.jobTitle.trim()),
+      passwordChangedAt: new Date().toISOString(),
+      loginHistory: [],
+      notifications: [],
     };
 
     setAppState((prev) => ({
       ...prev,
-      users: [...prev.users, newUser],
+      users: [...prev.users.map(user => user.id === newUser.reportsTo ? {
+        ...user,
+        directReports: Array.from(new Set([...(user.directReports || []), newUser.id])),
+        notifications: [{
+          id: generateId(),
+          message: `${newUser.username} has been added as your direct report.`,
+          read: false,
+          createdAt: new Date().toISOString(),
+          type: 'info' as const,
+          link: 'teamStructure',
+        }, ...(user.notifications || [])].slice(0, 50),
+      } : user), newUser],
+      auditLog: [{
+        id: generateId(),
+        timestamp: new Date().toISOString(),
+        userId: currentUser.id,
+        username: currentUser.username,
+        role: currentUser.role,
+        action: 'CREATE_USER',
+        details: `Created user ${newUser.username}`,
+        ipHint: 'Browser session',
+      }, ...(prev.auditLog || [])].slice(0, 500),
     }));
 
     setUserForm({
@@ -190,6 +241,8 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
       role: 'member',
       squadId: '',
       projectId: isAdmin ? (currentUser.projectId || '') : '',
+      reportsTo: '',
+      jobTitle: '',
     });
     setUserPermissions(getPermissionsForRole('member'));
 
@@ -217,10 +270,28 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
           return {
             ...user,
             permissions: editingPermissionsVal,
+            notifications: [{
+              id: generateId(),
+              message: `Your access permissions were updated by ${currentUser.username}.`,
+              read: false,
+              createdAt: new Date().toISOString(),
+              type: 'info' as const,
+              link: 'profile',
+            }, ...(user.notifications || [])].slice(0, 50),
           };
         }
         return user;
       }),
+      auditLog: [{
+        id: generateId(),
+        timestamp: new Date().toISOString(),
+        userId: currentUser.id,
+        username: currentUser.username,
+        role: currentUser.role,
+        action: 'PERMISSION_CHANGE',
+        details: `Updated permissions for ${prev.users.find(user => user.id === userId)?.username || userId}`,
+        ipHint: 'Browser session',
+      }, ...(prev.auditLog || [])].slice(0, 500),
     }));
     showToast('Permissions updated successfully!', 'success');
     setEditingPermissionsUserId(null);
@@ -272,7 +343,30 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
     const password = await hashPassword(resetPasswordForm.password.trim());
     setAppState((prev) => ({
       ...prev,
-      users: prev.users.map((u) => (u.id === resetPasswordUser.id ? { ...u, password, mustChangePassword: true } : u)),
+      users: prev.users.map((u) => (u.id === resetPasswordUser.id ? {
+        ...u,
+        password,
+        mustChangePassword: true,
+        passwordChangedAt: new Date().toISOString(),
+        notifications: [{
+          id: generateId(),
+          message: `Your password was reset by ${currentUser.username}.`,
+          read: false,
+          createdAt: new Date().toISOString(),
+          type: 'warning' as const,
+          link: 'profile',
+        }, ...(u.notifications || [])].slice(0, 50),
+      } : u)),
+      auditLog: [{
+        id: generateId(),
+        timestamp: new Date().toISOString(),
+        userId: currentUser.id,
+        username: currentUser.username,
+        role: currentUser.role,
+        action: 'RESET_PASSWORD',
+        details: `Reset password for ${resetPasswordUser.username}`,
+        ipHint: 'Browser session',
+      }, ...(prev.auditLog || [])].slice(0, 500),
     }));
     setResetPasswordUser(null);
     setResetPasswordForm({ password: '', confirm: '' });
@@ -290,7 +384,23 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
     if (confirm('Are you sure you want to delete this user?')) {
       setAppState((prev) => ({
         ...prev,
-        users: prev.users.filter((u) => u.id !== userId),
+        users: prev.users
+          .filter((u) => u.id !== userId)
+          .map(user => ({
+            ...user,
+            reportsTo: user.reportsTo === userId ? null : user.reportsTo,
+            directReports: (user.directReports || []).filter(id => id !== userId),
+          })),
+        auditLog: [{
+          id: generateId(),
+          timestamp: new Date().toISOString(),
+          userId: currentUser.id,
+          username: currentUser.username,
+          role: currentUser.role,
+          action: 'DELETE_USER',
+          details: `Deleted user ${target.username}`,
+          ipHint: 'Browser session',
+        }, ...(prev.auditLog || [])].slice(0, 500),
       }));
       showToast('User deleted.', 'success');
     }
@@ -528,12 +638,19 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
     );
   };
 
+  const filteredAuditLog = useMemo(() => (appState.auditLog || [])
+    .filter(entry => !auditFilters.user || entry.userId === auditFilters.user)
+    .filter(entry => !auditFilters.action || entry.action === auditFilters.action)
+    .filter(entry => !auditFilters.from || entry.timestamp.slice(0, 10) >= auditFilters.from)
+    .filter(entry => !auditFilters.to || entry.timestamp.slice(0, 10) <= auditFilters.to)
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp)), [appState.auditLog, auditFilters]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       
       {/* Tab selection */}
       <div style={{ display: 'flex', borderBottom: `2px solid ${theme.border}`, gap: '16px' }}>
-        {(['users', ...(isSuperAdmin ? ['projects'] : []), 'squads', 'fields'] as const).map((tab) => (
+        {(['users', ...(isSuperAdmin ? ['projects'] : []), 'squads', 'fields', ...(isSuperAdmin ? ['audit'] : [])] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -550,7 +667,7 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
               textTransform: 'capitalize',
             }}
           >
-            {tab === 'fields' ? 'Custom Fields' : tab}
+            {tab === 'fields' ? 'Custom Fields' : tab === 'audit' ? 'Audit Log' : tab}
           </button>
         ))}
       </div>
@@ -675,6 +792,27 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
                 error={userErrors.squadId}
                 theme={theme}
               />}
+
+              {userForm.role !== 'superadmin' && <Field
+                label="Reports To (Direct Manager)"
+                type="select"
+                value={userForm.reportsTo}
+                onChange={(v) => updateUserForm('reportsTo', v)}
+                options={reportsToOptions}
+                placeholder={reportsToOptions.length ? 'Select manager' : 'No eligible managers'}
+                required
+                error={userErrors.reportsTo}
+                theme={theme}
+              />}
+
+              <Field
+                label="Job Title"
+                type="text"
+                placeholder="e.g. Senior QA Engineer"
+                value={userForm.jobTitle}
+                onChange={(v) => updateUserForm('jobTitle', v)}
+                theme={theme}
+              />
 
               <div style={{ gridColumn: '1 / -1', marginTop: '12px' }}>
                 <label style={{ ...commonStyles.label(theme), fontSize: '14px', fontWeight: 600, color: theme.text }}>
@@ -1116,6 +1254,53 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
             </div>
           </div>
 
+        </div>
+      )}
+
+      {activeTab === 'audit' && isSuperAdmin && (
+        <div style={commonStyles.card(theme)}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', marginBottom: '14px' }}>
+            <h3 style={{ margin: 0, fontSize: '16px' }}>Audit Log</h3>
+            <button type="button" onClick={() => exportToCSV(filteredAuditLog.map(entry => ({
+              Timestamp: entry.timestamp,
+              User: entry.username,
+              Role: entry.role,
+              Action: entry.action,
+              Details: entry.details,
+            })), 'qa_hub_audit_log')} style={commonStyles.button(theme, 'secondary', 'sm')}>Export CSV</button>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'end', marginBottom: '14px' }}>
+            <Field label="User" type="select" value={auditFilters.user} onChange={(value) => setAuditFilters(prev => ({ ...prev, user: value }))} options={appState.users.map(user => ({ value: user.id, label: user.username }))} placeholder="All Users" theme={theme} />
+            <Field label="Action" type="select" value={auditFilters.action} onChange={(value) => setAuditFilters(prev => ({ ...prev, action: value }))} options={Array.from(new Set((appState.auditLog || []).map(entry => entry.action))).sort().map(action => ({ value: action, label: action }))} placeholder="All Actions" theme={theme} />
+            <Field label="From" type="date" value={auditFilters.from} onChange={(value) => setAuditFilters(prev => ({ ...prev, from: value }))} theme={theme} />
+            <Field label="To" type="date" value={auditFilters.to} onChange={(value) => setAuditFilters(prev => ({ ...prev, to: value }))} theme={theme} />
+          </div>
+          <div style={{ overflowX: 'auto', maxHeight: '560px' }}>
+            <table style={commonStyles.table(theme)}>
+              <thead>
+                <tr>
+                  <th style={commonStyles.th(theme)}>Timestamp</th>
+                  <th style={commonStyles.th(theme)}>User</th>
+                  <th style={commonStyles.th(theme)}>Role</th>
+                  <th style={commonStyles.th(theme)}>Action</th>
+                  <th style={commonStyles.th(theme)}>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAuditLog.length ? filteredAuditLog.map(entry => (
+                  <tr key={entry.id}>
+                    <td style={commonStyles.td(theme)}>{new Date(entry.timestamp).toLocaleString()}</td>
+                    <td style={commonStyles.td(theme)}>{entry.username}</td>
+                    <td style={{ ...commonStyles.td(theme), textTransform: 'capitalize' }}>{entry.role}</td>
+                    <td style={commonStyles.td(theme)}>{entry.action}</td>
+                    <td style={commonStyles.td(theme)}>{entry.details}</td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan={5} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '22px' }}>No audit entries found.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

@@ -169,6 +169,27 @@ export function Timesheet({ currentUser, appState, setAppState, showToast, theme
       return {
         ...prev,
         timesheetEntries: [...filtered, newEntry],
+        users: prev.users.map(user => user.id === selectedUser.id && isEditingAnotherUser ? {
+          ...user,
+          notifications: [{
+            id: generateId(),
+            message: `${currentUser.username} adjusted your timesheet for ${selectedMonth}.`,
+            read: false,
+            createdAt: modifiedAt,
+            type: 'info' as const,
+            link: 'timesheet',
+          }, ...(user.notifications || [])].slice(0, 50),
+        } : user),
+        auditLog: [{
+          id: generateId(),
+          timestamp: modifiedAt,
+          userId: currentUser.id,
+          username: currentUser.username,
+          role: currentUser.role,
+          action: isEditingAnotherUser ? 'TIMESHEET_ADMIN_ADJUST' : 'TIMESHEET_SAVE',
+          details: `${isEditingAnotherUser ? 'Adjusted' : 'Saved'} ${selectedUser.username}'s timesheet for ${selectedMonth}`,
+          ipHint: 'Browser session',
+        }, ...(prev.auditLog || [])].slice(0, 500),
       };
     });
     setLastSavedAt(modifiedAt);

@@ -43,6 +43,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
     tcExecuted: 0,
     tcPassed: 0,
     tcFailed: 0,
+    storyStatus: 'In Progress' as 'In Progress' | 'Completed' | 'Blocked' | 'On Hold',
     notes: '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -171,6 +172,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
       tcPassed: isCreatedOnly ? null : Number(form.tcPassed) || 0,
       tcFailed: isCreatedOnly ? null : Number(form.tcFailed) || 0,
       notes: sanitise(form.notes.trim()),
+      storyStatus: form.storyStatus,
       addedBy: currentUser.id,
       addedByName: currentUser.username,
       lastEditedBy: null,
@@ -181,7 +183,17 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
 
     setAppState((prev) => ({
       ...prev,
-      dataEntries: [...prev.dataEntries, newEntry]
+      dataEntries: [...prev.dataEntries, newEntry],
+      auditLog: [{
+        id: generateId(),
+        timestamp: new Date().toISOString(),
+        userId: currentUser.id,
+        username: currentUser.username,
+        role: currentUser.role,
+        action: 'DATA_ENTRY_ADD',
+        details: `Added story ${newEntry.jiraStorySummary}`,
+        ipHint: 'Browser session',
+      }, ...(prev.auditLog || [])].slice(0, 500),
     }));
     setNewRowId(newEntry.id);
     setTimeout(() => setNewRowId(null), 1500);
@@ -199,6 +211,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
       tcExecuted: 0,
       tcPassed: 0,
       tcFailed: 0,
+      storyStatus: 'In Progress',
       notes: '',
     });
     setCustomFormVals({});
@@ -220,6 +233,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
       tcExecuted: entry.tcExecuted ?? 0,
       tcPassed: entry.tcPassed ?? 0,
       tcFailed: entry.tcFailed ?? 0,
+      storyStatus: entry.storyStatus || 'In Progress',
       notes: entry.notes || '',
     });
     setEditErrors({});
@@ -257,10 +271,21 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
         tcPassed: isCreatedOnly ? null : Number(editForm.tcPassed) || 0,
         tcFailed: isCreatedOnly ? null : Number(editForm.tcFailed) || 0,
         notes: sanitise(editForm.notes.trim()),
+        storyStatus: editForm.storyStatus,
         lastEditedBy: currentUser.username,
         lastEditedAt: new Date().toISOString(),
         lastEditedByRole: currentUser.role,
       } : entry),
+      auditLog: [{
+        id: generateId(),
+        timestamp: new Date().toISOString(),
+        userId: currentUser.id,
+        username: currentUser.username,
+        role: currentUser.role,
+        action: 'DATA_ENTRY_EDIT',
+        details: `Edited story ${editForm.jiraStorySummary}`,
+        ipHint: 'Browser session',
+      }, ...(previous.auditLog || [])].slice(0, 500),
     }));
     setEditingEntry(null);
     setEditForm(null);
@@ -345,6 +370,14 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
 
             <Field label="Jira Story Link" type="text" placeholder="https://jira.company.com/browse/PROJ-123" value={form.jiraStoryLink} onChange={(v) => updateForm('jiraStoryLink', v)} error={errors.jiraStoryLink} required theme={theme} />
             <Field label="Jira Story Summary / Title" type="text" placeholder="e.g. Implement checkout logic" value={form.jiraStorySummary} onChange={(v) => updateForm('jiraStorySummary', v)} error={errors.jiraStorySummary} required theme={theme} />
+            <Field
+              label="Story Status"
+              type="select"
+              value={form.storyStatus}
+              onChange={(v) => updateForm('storyStatus', v)}
+              options={['In Progress', 'Completed', 'Blocked', 'On Hold'].map(status => ({ value: status, label: status }))}
+              theme={theme}
+            />
 
             <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '14px', alignItems: 'center', padding: '8px 0' }}>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 700 }}>
@@ -418,6 +451,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
                 <th style={commonStyles.th(theme)}>Project</th>
                 <th style={{ ...commonStyles.th(theme), borderRight: `1px solid ${theme.border}` }}>Squad</th>
                 <th style={commonStyles.th(theme)}>Story</th>
+                <th style={commonStyles.th(theme)}>Status</th>
                 <th style={{ ...commonStyles.th(theme), minWidth: '74px' }}>Mode</th>
                 <th style={{ ...commonStyles.th(theme), minWidth: '62px' }}>TC Cr</th>
                 <th style={{ ...commonStyles.th(theme), minWidth: '62px' }}>TC Ex</th>
@@ -431,7 +465,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
             <tbody>
               {visibleEntries.length === 0 ? (
                 <tr>
-                  <td colSpan={readOnly ? 12 : 13} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '28px' }}>
+                  <td colSpan={readOnly ? 13 : 14} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '28px' }}>
                     <div style={{ fontSize: '18px', marginBottom: '4px' }}>∅</div>
                     No test entries found.
                   </td>
@@ -441,6 +475,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
                   const isCreatedOnly = row.tcExecuted === null;
                   const passRate = !isCreatedOnly && row.tcExecuted && row.tcExecuted > 0 ? ((row.tcPassed || 0) / row.tcExecuted) * 100 : null;
                   const projectColor = ['#3b82f6', '#10b981', '#f59e0b', '#6366f1', '#ef4444'][index % 5];
+                  const statusColor = row.storyStatus === 'Completed' ? theme.green : row.storyStatus === 'Blocked' ? theme.red : row.storyStatus === 'On Hold' ? theme.amber : theme.blue;
 
                   return (
                     <React.Fragment key={row.id}>
@@ -456,6 +491,9 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
                             <ExternalLink size={12} /> Jira
                           </a>
                         </div>
+                      </td>
+                      <td style={commonStyles.td(theme)}>
+                        <Badge label={row.storyStatus || 'In Progress'} colorHex={statusColor} theme={theme} />
                       </td>
                       <td style={commonStyles.td(theme)}>
                         <Badge label={isCreatedOnly ? 'TCs Only' : 'Full'} colorHex={isCreatedOnly ? theme.blue : theme.green} theme={theme} />
@@ -499,7 +537,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
                     </tr>
                     {row.lastEditedAt && (
                       <tr style={{ backgroundColor: index % 2 === 1 ? `${theme.inputBg}cc` : 'transparent', borderLeft: `4px solid ${projectColor}` }}>
-                        <td colSpan={readOnly ? 12 : 13} style={{ ...commonStyles.td(theme), paddingTop: '0', color: theme.muted, fontSize: '11px' }}>
+                        <td colSpan={readOnly ? 13 : 14} style={{ ...commonStyles.td(theme), paddingTop: '0', color: theme.muted, fontSize: '11px' }}>
                           Last edited by {row.lastEditedBy || 'Unknown'} on {formatDateTime(row.lastEditedAt)}
                         </td>
                       </tr>
@@ -526,6 +564,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
               <Field label="Squad" type="select" value={editForm.squadId} onChange={(v) => updateEditForm('squadId', v)} options={appState.squads.filter(s => !editForm.projectId || !s.projectId || s.projectId === editForm.projectId).map(s => ({ value: s.id, label: s.name }))} required error={editErrors.squadId} theme={theme} />
               <Field label="Jira Story Link" type="text" value={editForm.jiraStoryLink} onChange={(v) => updateEditForm('jiraStoryLink', v)} error={editErrors.jiraStoryLink} required theme={theme} />
               <Field label="Jira Story Summary" type="text" value={editForm.jiraStorySummary} onChange={(v) => updateEditForm('jiraStorySummary', v)} error={editErrors.jiraStorySummary} required theme={theme} />
+              <Field label="Story Status" type="select" value={editForm.storyStatus} onChange={(v) => updateEditForm('storyStatus', v)} options={['In Progress', 'Completed', 'Blocked', 'On Hold'].map(status => ({ value: status, label: status }))} theme={theme} />
               <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '14px', alignItems: 'center', padding: '4px 0' }}>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 700 }}>
                   <input type="radio" checked={editForm.tcMode === 'created'} onChange={() => updateEditForm('tcMode', 'created', { tcExecuted: 0, tcPassed: 0, tcFailed: 0 })} />

@@ -126,6 +126,16 @@ export function Releases({ currentUser, appState, setAppState, showToast, theme,
       releaseNames: (previous.releaseNames || []).some(release => release.name.toLowerCase() === cleanReleaseName.toLowerCase())
         ? previous.releaseNames
         : [...(previous.releaseNames || []), { id: generateId(), name: cleanReleaseName }],
+      auditLog: [{
+        id: generateId(),
+        timestamp: new Date().toISOString(),
+        userId: currentUser.id,
+        username: currentUser.username,
+        role: currentUser.role,
+        action: 'RELEASE_ADD',
+        details: `Added release ${cleanReleaseName}`,
+        ipHint: 'Browser session',
+      }, ...(previous.auditLog || [])].slice(0, 500),
     }));
     setForm({
       releaseName: '',

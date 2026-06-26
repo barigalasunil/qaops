@@ -64,6 +64,26 @@ export const commonStyles = {
     boxSizing: 'border-box' as const,
     transition: 'border-color 0.2s ease',
   }),
+  select: (theme: ThemeTokens, fullWidth = false) => ({
+    width: fullWidth ? '100%' : 'auto',
+    minWidth: fullWidth ? '0' : '120px',
+    maxWidth: fullWidth ? 'none' : '200px',
+    background: theme.inputBg,
+    border: `1px solid ${theme.border}`,
+    color: theme.text,
+    borderRadius: '6px',
+    padding: '6px 28px 6px 10px',
+    fontSize: '12px',
+    outline: 'none',
+    boxSizing: 'border-box' as const,
+    appearance: 'none' as const,
+    WebkitAppearance: 'none' as const,
+    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+    backgroundRepeat: 'no-repeat',
+    backgroundPosition: 'right 8px center',
+    cursor: 'pointer',
+    transition: 'border-color 0.2s ease',
+  }),
   button: (theme: ThemeTokens, variant: 'primary' | 'secondary' | 'danger' | 'success' = 'primary', size: 'sm' | 'md' = 'md') => {
     let bg = theme.blue;
     let color = '#ffffff';

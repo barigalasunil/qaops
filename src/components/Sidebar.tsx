@@ -11,6 +11,7 @@ import {
   Layers,
   Clock,
   Download,
+  Network,
   CalendarCheck,
   Settings as SettingsIcon,
   LogOut,
@@ -50,6 +51,7 @@ export function Sidebar({
     { id: 'defects', label: 'Defects', icon: AlertTriangle, roles: ['superadmin', 'admin', 'lead', 'member'] },
     { id: 'releases', label: 'Releases', icon: Layers, roles: ['superadmin', 'admin', 'lead', 'member'] },
     { id: 'timesheet', label: 'Timesheet', icon: Clock, roles: ['superadmin', 'admin', 'lead', 'member'] },
+    { id: 'teamStructure', label: 'Team Structure', icon: Network, roles: ['superadmin', 'admin', 'lead'] },
     { id: 'export', label: 'Export', icon: Download, roles: ['superadmin', 'admin', 'lead'] },
     { id: 'settings', label: 'Settings', icon: SettingsIcon, roles: ['superadmin', 'admin'] },
   ];
@@ -233,7 +235,10 @@ export function Sidebar({
         </button>
 
         {/* User Info & Sign-out */}
-        <div
+        <button
+          type="button"
+          onClick={() => setCurrentTab('profile')}
+          title="My Profile"
           style={{
             display: 'flex',
             flexDirection: collapsed ? 'column' : 'row',
@@ -243,6 +248,10 @@ export function Sidebar({
             borderRadius: '6px',
             backgroundColor: 'rgba(255, 255, 255, 0.04)',
             gap: collapsed ? '8px' : '4px',
+            border: 'none',
+            color: '#ffffff',
+            cursor: 'pointer',
+            width: '100%',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', width: collapsed ? 'auto' : '80%' }}>
@@ -276,8 +285,13 @@ export function Sidebar({
             )}
           </div>
 
-          <button
+          <span
+            role="button"
+            tabIndex={0}
             onClick={onLogout}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') onLogout();
+            }}
             style={{
               padding: '4px',
               borderRadius: '4px',
@@ -293,8 +307,8 @@ export function Sidebar({
             title="Sign Out"
           >
             <LogOut size={14} style={{ color: theme.red }} />
-          </button>
-        </div>
+          </span>
+        </button>
       </div>
     </div>
   );

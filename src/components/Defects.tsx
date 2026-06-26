@@ -21,6 +21,7 @@ interface DefectsProps {
 
 export function Defects({ currentUser, appState, setAppState, showToast, theme, readOnly = false }: DefectsProps) {
   const isMember = currentUser.role === 'member';
+  const statusOptions: IDefect['status'][] = ['Open', 'In Progress', 'Re-Opened', 'Resolved', 'Closed'];
 
   // Filters state (for Leads / Admins)
   const [filters, setFilters] = useState({
@@ -33,6 +34,7 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
   // Form State
   const [form, setForm] = useState({
     date: new Date().toISOString().split('T')[0],
+    jiraCreatedDate: new Date().toISOString().split('T')[0],
     release: '',
     projectId: currentUser.projectId || '',
     squadId: currentUser.squadId || '',
@@ -40,6 +42,7 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
     jiraDefectSummary: '',
     priority: 'P2' as 'P1' | 'P2' | 'P3',
     status: 'Open' as 'Open' | 'In Progress' | 'Re-Opened' | 'Resolved' | 'Closed',
+    resolvedDate: '',
     sitMiss: false,
     storyLink: '',
     storySummary: '',
@@ -47,6 +50,7 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [newRowId, setNewRowId] = useState<string | null>(null);
+  const [statusEdit, setStatusEdit] = useState<{ id: string; status: IDefect['status']; resolvedDate: string } | null>(null);
   const updateForm = (key: keyof typeof form, value: any, extras: Partial<typeof form> = {}) => {
     setForm(previous => ({ ...previous, [key]: value, ...extras }));
     setErrors(previous => {
@@ -111,6 +115,7 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
     e.preventDefault();
     const nextErrors: Record<string, string> = {};
     if (!form.date) nextErrors.date = 'Date is required.';
+    if (!form.jiraCreatedDate) nextErrors.jiraCreatedDate = 'Date Created in Jira is required.';
     if (!form.release) nextErrors.release = 'Release is required.';
     if (!form.projectId) nextErrors.projectId = 'Project is required.';
     if (!form.squadId) nextErrors.squadId = 'Squad is required.';
@@ -120,6 +125,7 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
     else if (form.jiraDefectSummary.trim().length < 3) nextErrors.jiraDefectSummary = 'Summary must be at least 3 characters.';
     if (!form.priority) nextErrors.priority = 'Priority is required.';
     if (!form.status) nextErrors.status = 'Status is required.';
+    if ((form.status === 'Resolved' || form.status === 'Closed') && !form.resolvedDate) nextErrors.resolvedDate = 'Resolved Date is required.';
     if (form.storyLink && !/^https?:\/\//i.test(form.storyLink)) nextErrors.storyLink = 'Link must start with http:// or https://.';
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
@@ -127,6 +133,7 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
     const newDefect: IDefect = {
       id: generateId(),
       date: form.date,
+      jiraCreatedDate: form.jiraCreatedDate,
       release: sanitise(form.release.trim()),
       projectId: form.projectId,
       squadId: form.squadId,
@@ -134,6 +141,8 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
       jiraDefectSummary: sanitise(form.jiraDefectSummary.trim()),
       priority: form.priority,
       status: form.status,
+      resolvedDate: (form.status === 'Resolved' || form.status === 'Closed') ? form.resolvedDate : null,
+      statusHistory: [{ status: form.status, changedBy: currentUser.username, changedAt: new Date().toISOString() }],
       sitMiss: form.sitMiss,
       storyLink: form.storyLink.trim() || undefined,
       storySummary: sanitise(form.storySummary.trim()) || undefined,
@@ -143,16 +152,43 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
       customFields: Object.fromEntries(Object.entries(customFormVals).map(([key, value]) => [key, sanitise(value)]))
     };
 
-    setAppState((prev) => ({
-      ...prev,
-      defects: [...prev.defects, newDefect]
-    }));
+    setAppState((prev) => {
+      const notifyUsers = prev.users.filter(user => (user.role === 'lead' && (user.squadId === newDefect.squadId || user.projectId === newDefect.projectId)) || user.role === 'admin' && user.projectId === newDefect.projectId);
+      return {
+        ...prev,
+        defects: [...prev.defects, newDefect],
+        users: prev.users.map(user => notifyUsers.some(target => target.id === user.id) ? {
+          ...user,
+          notifications: [{
+            id: generateId(),
+            message: newDefect.priority === 'P1'
+              ? `P1 defect raised: ${newDefect.jiraDefectSummary}`
+              : `New ${newDefect.priority} defect logged for ${newDefect.release} by ${currentUser.username}.`,
+            read: false,
+            createdAt: new Date().toISOString(),
+            type: newDefect.priority === 'P1' ? 'alert' as const : 'info' as const,
+            link: 'defects',
+          }, ...(user.notifications || [])].slice(0, 50),
+        } : user),
+        auditLog: [{
+          id: generateId(),
+          timestamp: new Date().toISOString(),
+          userId: currentUser.id,
+          username: currentUser.username,
+          role: currentUser.role,
+          action: 'DEFECT_ADD',
+          details: `Added ${newDefect.priority} defect ${newDefect.jiraDefectSummary}`,
+          ipHint: 'Browser session',
+        }, ...(prev.auditLog || [])].slice(0, 500),
+      };
+    });
     setNewRowId(newDefect.id);
     setTimeout(() => setNewRowId(null), 1500);
 
     // Reset Form
     setForm({
       date: new Date().toISOString().split('T')[0],
+      jiraCreatedDate: new Date().toISOString().split('T')[0],
       release: '',
       projectId: currentUser.projectId || '',
       squadId: currentUser.squadId || '',
@@ -160,6 +196,7 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
       jiraDefectSummary: '',
       priority: 'P2',
       status: 'Open',
+      resolvedDate: '',
       sitMiss: false,
       storyLink: '',
       storySummary: '',
@@ -174,10 +211,51 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
     if (confirm('Are you sure you want to delete this defect?')) {
       setAppState((prev) => ({
         ...prev,
-        defects: prev.defects.filter((d) => d.id !== id)
+        defects: prev.defects.filter((d) => d.id !== id),
+        auditLog: [{
+          id: generateId(),
+          timestamp: new Date().toISOString(),
+          userId: currentUser.id,
+          username: currentUser.username,
+          role: currentUser.role,
+          action: 'DEFECT_DELETE',
+          details: `Deleted defect ${id}`,
+          ipHint: 'Browser session',
+        }, ...(prev.auditLog || [])].slice(0, 500),
       }));
       showToast('Defect removed.', 'success');
     }
+  };
+
+  const getDefectAge = (defect: IDefect) => {
+    const startDate = defect.jiraCreatedDate || defect.date;
+    const start = new Date(`${startDate}T00:00:00`).getTime();
+    const resolved = defect.status === 'Resolved' || defect.status === 'Closed';
+    const endDate = resolved && defect.resolvedDate ? defect.resolvedDate : new Date().toISOString().slice(0, 10);
+    const end = new Date(`${endDate}T00:00:00`).getTime();
+    const days = Math.max(0, Math.floor((end - start) / 86400000));
+    const color = resolved ? theme.muted : days <= 7 ? theme.green : days <= 14 ? theme.amber : days <= 30 ? theme.orange : theme.red;
+    return { days, label: resolved ? `Resolved in ${days} days` : `${days} days`, color, resolved };
+  };
+
+  const saveStatusEdit = (defect: IDefect) => {
+    if (!statusEdit || statusEdit.id !== defect.id) return;
+    if ((statusEdit.status === 'Resolved' || statusEdit.status === 'Closed') && !statusEdit.resolvedDate) {
+      showToast('Resolved Date is required for resolved or closed defects.', 'error');
+      return;
+    }
+    const changedAt = new Date().toISOString();
+    setAppState(previous => ({
+      ...previous,
+      defects: previous.defects.map(item => item.id === defect.id ? {
+        ...item,
+        status: statusEdit.status,
+        resolvedDate: (statusEdit.status === 'Resolved' || statusEdit.status === 'Closed') ? statusEdit.resolvedDate : null,
+        statusHistory: [...(item.statusHistory || []), { status: statusEdit.status, changedBy: currentUser.username, changedAt }],
+      } : item),
+    }));
+    setStatusEdit(null);
+    showToast('Defect status updated.', 'success');
   };
 
   const hasSetupData = appState.projects.length > 0 && appState.squads.length > 0;
@@ -204,6 +282,10 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
           </h3>
           <form noValidate onSubmit={handleSubmit} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
             <Field label="Defect Date" type="date" value={form.date} onChange={(v) => updateForm('date', v)} error={errors.date} required theme={theme} />
+            <div>
+              <Field label="Date Created in Jira" type="date" value={form.jiraCreatedDate} onChange={(v) => updateForm('jiraCreatedDate', v)} error={errors.jiraCreatedDate} required theme={theme} />
+              <div style={{ color: theme.muted, fontSize: '11px', marginTop: '3px' }}>When was this defect originally raised in Jira?</div>
+            </div>
             <Field
               label="Release"
               type="select"
@@ -268,18 +350,15 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
               label="Status"
               type="select"
               value={form.status}
-              onChange={(v) => updateForm('status', v)}
-              options={[
-                { value: 'Open', label: 'Open' },
-                { value: 'In Progress', label: 'In Progress' },
-                { value: 'Re-Opened', label: 'Re-Opened' },
-                { value: 'Resolved', label: 'Resolved' },
-                { value: 'Closed', label: 'Closed' }
-              ]}
+              onChange={(v) => updateForm('status', v, (v === 'Resolved' || v === 'Closed') ? {} : { resolvedDate: '' })}
+              options={statusOptions.map(status => ({ value: status, label: status }))}
               required
               error={errors.status}
               theme={theme}
             />
+            {(form.status === 'Resolved' || form.status === 'Closed') && (
+              <Field label="Resolved Date" type="date" value={form.resolvedDate} onChange={(v) => updateForm('resolvedDate', v)} error={errors.resolvedDate} required theme={theme} />
+            )}
 
             <div style={{ display: 'flex', alignItems: 'center', height: '100%', paddingTop: '20px' }}>
               <Field
@@ -353,6 +432,7 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
                 <th style={commonStyles.th(theme)}>Priority</th>
                 <th style={commonStyles.th(theme)}>SIT Miss</th>
                 <th style={commonStyles.th(theme)}>Status</th>
+                <th style={commonStyles.th(theme)}>Age</th>
                 <th style={commonStyles.th(theme)}>Related Story</th>
                 {!readOnly && <th style={{ ...commonStyles.th(theme), width: '76px' }}>Actions</th>}
               </tr>
@@ -360,7 +440,7 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
             <tbody>
               {visibleDefects.length === 0 ? (
                 <tr>
-                  <td colSpan={readOnly ? 10 : 11} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '28px' }}>
+                  <td colSpan={readOnly ? 11 : 12} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '28px' }}>
                     <div style={{ fontSize: '18px', marginBottom: '4px' }}>∅</div>
                     No defects logged yet.
                   </td>
@@ -376,6 +456,8 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
                       : row.status === 'Re-Opened' ? theme.orange
                         : row.status === 'Resolved' ? theme.green
                           : theme.muted;
+                  const age = getDefectAge(row);
+                  const editingThisStatus = statusEdit?.id === row.id;
 
                   return (
                     <tr key={row.id} className={row.id === newRowId ? 'row-flash' : undefined} style={{ backgroundColor: index % 2 === 1 ? `${theme.inputBg}cc` : 'transparent', borderLeft: `4px solid ${priorityColor}` }}>
@@ -412,20 +494,51 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
                       </td>
 
                       <td style={commonStyles.td(theme)}>
-                        <span
-                          style={{
-                            display: 'inline-block',
-                            padding: '3px 8px',
-                            borderRadius: '12px',
-                            fontSize: '12px',
-                            fontWeight: 600,
-                            backgroundColor: `${statusColor}20`,
-                            color: statusColor,
-                            border: `1px solid ${statusColor}33`,
-                          }}
-                        >
-                          {row.status}
-                        </span>
+                        {editingThisStatus ? (
+                          <div onBlur={(event) => {
+                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) saveStatusEdit(row);
+                          }}>
+                            <select
+                              autoFocus
+                              value={statusEdit.status}
+                              onChange={(event) => setStatusEdit(previous => previous ? { ...previous, status: event.target.value as IDefect['status'], resolvedDate: (event.target.value === 'Resolved' || event.target.value === 'Closed') ? previous.resolvedDate : '' } : previous)}
+                              onKeyDown={(event) => { if (event.key === 'Enter') saveStatusEdit(row); if (event.key === 'Escape') setStatusEdit(null); }}
+                              style={commonStyles.select(theme)}
+                            >
+                              {statusOptions.map(status => <option key={status} value={status}>{status}</option>)}
+                            </select>
+                            {(statusEdit.status === 'Resolved' || statusEdit.status === 'Closed') && (
+                              <input
+                                type="date"
+                                value={statusEdit.resolvedDate}
+                                onChange={(event) => setStatusEdit(previous => previous ? { ...previous, resolvedDate: event.target.value } : previous)}
+                                onKeyDown={(event) => { if (event.key === 'Enter') saveStatusEdit(row); }}
+                                style={{ ...commonStyles.input(theme), marginTop: '6px', borderColor: !statusEdit.resolvedDate ? theme.red : theme.border }}
+                              />
+                            )}
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => !readOnly && setStatusEdit({ id: row.id, status: row.status, resolvedDate: row.resolvedDate || new Date().toISOString().slice(0, 10) })}
+                            style={{
+                              display: 'inline-block',
+                              padding: '3px 8px',
+                              borderRadius: '12px',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              backgroundColor: `${statusColor}20`,
+                              color: statusColor,
+                              border: `1px solid ${statusColor}33`,
+                              cursor: readOnly ? 'default' : 'pointer',
+                            }}
+                          >
+                            {row.status}
+                          </button>
+                        )}
+                      </td>
+                      <td style={commonStyles.td(theme)}>
+                        <span style={commonStyles.badge(theme, age.color)}>{age.label}</span>
                       </td>
 
                       <td style={commonStyles.td(theme)}>
@@ -459,6 +572,16 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
                               );
                             })}
                           </div>
+                        )}
+                        {(row.statusHistory || []).length > 0 && (
+                          <details style={{ marginTop: '6px', color: theme.muted, fontSize: '10px' }}>
+                            <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Status History</summary>
+                            {(row.statusHistory || []).map((item, historyIndex) => (
+                              <div key={`${item.changedAt}-${historyIndex}`} style={{ marginTop: '3px' }}>
+                                {item.status} - {item.changedBy} on {new Date(item.changedAt).toLocaleString()}
+                              </div>
+                            ))}
+                          </details>
                         )}
                       </td>
 

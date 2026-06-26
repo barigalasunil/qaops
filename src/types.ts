@@ -28,6 +28,12 @@ export interface User {
   loginCount: number;
   failedLoginAttempts: number;
   lockedUntil: number | null;
+  passwordChangedAt?: string;
+  loginHistory?: (string | { timestamp: string; sessionId?: string })[];
+  reportsTo?: string | null;
+  directReports?: string[];
+  jobTitle?: string;
+  notifications?: UserNotification[];
 }
 
 export interface Project {
@@ -59,6 +65,7 @@ export interface DataEntry {
   tcPassed: number | null;
   tcFailed: number | null;
   notes: string;
+  storyStatus?: 'In Progress' | 'Completed' | 'Blocked' | 'On Hold';
   addedBy: string;
   addedByName: string;
   lastEditedBy: string | null;
@@ -75,8 +82,11 @@ export interface Defect {
   squadId: string;
   jiraDefectLink: string;
   jiraDefectSummary: string;
+  jiraCreatedDate?: string | null;
   priority: 'P1' | 'P2' | 'P3';
   status: 'Open' | 'In Progress' | 'Re-Opened' | 'Resolved' | 'Closed';
+  resolvedDate?: string | null;
+  statusHistory?: DefectStatusHistory[];
   sitMiss: boolean;
   storyLink?: string;
   storySummary?: string;
@@ -146,6 +156,44 @@ export interface CustomField {
   appliesTo: 'dataEntry' | 'defect' | 'both';
 }
 
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string;
+  userId: string;
+  username: string;
+  role: User['role'];
+  action: 'LOGIN' | 'LOGOUT' | 'CREATE_USER' | 'DELETE_USER' | 'RESET_PASSWORD'
+    | 'DATA_ENTRY_ADD' | 'DATA_ENTRY_EDIT' | 'DEFECT_ADD' | 'DEFECT_DELETE'
+    | 'TIMESHEET_SAVE' | 'TIMESHEET_ADMIN_ADJUST' | 'PERMISSION_CHANGE'
+    | 'HOLIDAY_ADD' | 'HOLIDAY_DELETE' | 'RELEASE_ADD';
+  details: string;
+  ipHint: string;
+}
+
+export interface UserNotification {
+  id: string;
+  message: string;
+  type: 'info' | 'warning' | 'success' | 'alert';
+  read: boolean;
+  createdAt: string;
+  link?: string;
+}
+
+export interface NotificationEntry {
+  id: string;
+  userId: string;
+  message: string;
+  read: boolean;
+  createdAt: string;
+  type: 'timesheet' | 'user' | 'password' | 'defect' | 'system';
+}
+
+export interface DefectStatusHistory {
+  status: Defect['status'];
+  changedBy: string;
+  changedAt: string;
+}
+
 export interface AppState {
   users: User[];
   projects: Project[];
@@ -158,4 +206,6 @@ export interface AppState {
   timesheetEntries: TimesheetEntry[];
   holidays: Holiday[];
   customFields: CustomField[];
+  auditLog: AuditLogEntry[];
+  notifications: NotificationEntry[];
 }

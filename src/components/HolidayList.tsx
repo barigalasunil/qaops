@@ -69,6 +69,16 @@ export function HolidayList({ currentUser, appState, setAppState, showToast, the
     setAppState(previous => ({
       ...previous,
       holidays: [...(previous.holidays || []), holiday],
+      auditLog: [{
+        id: generateId(),
+        timestamp: new Date().toISOString(),
+        userId: currentUser.id,
+        username: currentUser.username,
+        role: currentUser.role,
+        action: 'HOLIDAY_ADD',
+        details: `Added holiday ${holiday.name} on ${holiday.date}`,
+        ipHint: 'Browser session',
+      }, ...(previous.auditLog || [])].slice(0, 500),
     }));
     setForm({ date: '', name: '', type: 'Holiday' });
     setFilters(previous => ({ ...previous, year: String(holiday.year) }));
@@ -79,6 +89,16 @@ export function HolidayList({ currentUser, appState, setAppState, showToast, the
     setAppState(previous => ({
       ...previous,
       holidays: (previous.holidays || []).filter(holiday => holiday.id !== id),
+      auditLog: [{
+        id: generateId(),
+        timestamp: new Date().toISOString(),
+        userId: currentUser.id,
+        username: currentUser.username,
+        role: currentUser.role,
+        action: 'HOLIDAY_DELETE',
+        details: `Deleted holiday ${id}`,
+        ipHint: 'Browser session',
+      }, ...(previous.auditLog || [])].slice(0, 500),
     }));
     showToast('Holiday removed.', 'success');
   };
