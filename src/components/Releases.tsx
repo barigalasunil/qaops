@@ -6,7 +6,7 @@
 import React, { useMemo, useState } from 'react';
 import { ThemeTokens, commonStyles } from '../theme';
 import { AppState, ReleaseEntry, User } from '../types';
-import { formatDate, generateId, sanitise } from '../utils';
+import { formatDate, formatDateTime, generateId, sanitise } from '../utils';
 import { Field, ViewOnlyBanner } from './Shared';
 import { HelpCircle, Trash2 } from 'lucide-react';
 
@@ -217,7 +217,7 @@ export function Releases({ currentUser, appState, setAppState, showToast, theme,
                         ['Regression End', formatDate(entry.regressionEndDate || '')],
                         ['Beta Date', formatDate(entry.betaDate || '')],
                         ['PROD Date', formatDate(entry.prodReleaseDate || '')],
-                        ['Submitted On', new Date(entry.createdAt).toLocaleString()],
+                        ['Submitted On', formatDateTime(entry.createdAt)],
                       ].map(([label, value]) => (
                         <div key={label} style={label === 'Submitted On' ? { gridColumn: '1 / -1' } : undefined}>
                           <div style={{ color: theme.muted, fontSize: '10px', textTransform: 'uppercase', fontWeight: 700 }}>{label}</div>
@@ -275,7 +275,7 @@ export function Releases({ currentUser, appState, setAppState, showToast, theme,
                         ['Regression End', formatDate(entry.regressionEndDate || '')],
                         ['Beta Date', formatDate(entry.betaDate || '')],
                         ['PROD Date', formatDate(entry.prodReleaseDate || '')],
-                        ['Submitted On', new Date(entry.createdAt).toLocaleString()],
+                        ['Submitted On', formatDateTime(entry.createdAt)],
                       ].map(([label, value]) => (
                         <div key={label} style={label === 'Submitted On' ? { gridColumn: '1 / -1' } : undefined}>
                           <div style={{ color: theme.muted, fontSize: '10px', textTransform: 'uppercase', fontWeight: 700 }}>{label}</div>

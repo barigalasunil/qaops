@@ -14,6 +14,7 @@ export const DEFAULT_PERMISSIONS = {
     releases: 'edit',
     timesheet: 'edit',
     export: 'edit',
+    holidayList: 'edit',
     settings: 'edit',
   },
   admin: {
@@ -23,6 +24,7 @@ export const DEFAULT_PERMISSIONS = {
     releases: 'edit',
     timesheet: 'edit',
     export: 'edit',
+    holidayList: 'edit',
     settings: 'edit',
   },
   lead: {
@@ -32,6 +34,7 @@ export const DEFAULT_PERMISSIONS = {
     releases: 'edit',
     timesheet: 'edit',
     export: 'view',
+    holidayList: 'none',
     settings: 'none',
   },
   member: {
@@ -41,6 +44,7 @@ export const DEFAULT_PERMISSIONS = {
     releases: 'edit',
     timesheet: 'edit',
     export: 'none',
+    holidayList: 'none',
     settings: 'none',
   },
 } as const;
@@ -122,6 +126,23 @@ export const formatDate = (str: string): string => {
   return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
 };
 
+export function formatTime(isoString: string): string {
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
+export function formatDateTime(isoString: string): string {
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    + ' ' + formatTime(isoString);
+}
+
 export const getMonthLabel = (str: string): string => {
   if (!str) return '—';
   const parts = str.split('-');
@@ -167,9 +188,11 @@ export const getDaysForMonth = (year: number, month: number) => {
       dayName,
       isWeekendDay,
       status: (isWeekendDay ? 'Weekend' : 'Working') as 'Weekend' | 'Working',
+      isStatusSet: false,
       isNightDeployment: false,
       isWeekendSupport: false,
       notes: '',
+      workLocation: null,
       lastModifiedBy: null,
       lastModifiedByRole: null,
       lastModifiedAt: null,

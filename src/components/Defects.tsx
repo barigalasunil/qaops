@@ -8,13 +8,13 @@ import { ThemeTokens, commonStyles } from '../theme';
 import { AppState, Defect as IDefect, User } from '../types';
 import { generateId, formatDate, sanitise } from '../utils';
 import { Field, FilterBar, Badge, ViewOnlyBanner } from './Shared';
-import { Plus, Trash2, HelpCircle } from 'lucide-react';
+import { Plus, Trash2, HelpCircle, ExternalLink } from 'lucide-react';
 
 interface DefectsProps {
   currentUser: User;
   appState: AppState;
   setAppState: React.Dispatch<React.SetStateAction<AppState>>;
-  showToast: (msg: string, type: 'success' | 'error') => void;
+  showToast: (msg: string, type: 'success' | 'error' | 'warning', duration?: number) => void;
   theme: ThemeTokens;
   readOnly?: boolean;
 }
@@ -340,28 +340,28 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
         <h3 style={{ fontSize: '16px', fontWeight: 600, color: theme.text, marginBottom: '16px', borderLeft: `4px solid ${theme.orange}`, paddingLeft: '8px' }}>
           {isMember ? 'My Logged Defects' : 'All Logged Defects'}
         </h3>
-        <div style={{ overflowX: 'auto' }}>
+        <div style={{ overflowX: 'auto', maxHeight: '620px' }}>
           <table style={commonStyles.table(theme)}>
             <thead>
-              <tr style={{ backgroundColor: theme.inputBg }}>
-                <th style={commonStyles.th(theme)}>Date</th>
+              <tr>
+                <th style={{ ...commonStyles.th(theme), minWidth: '98px' }}>Date</th>
                 <th style={commonStyles.th(theme)}>Release</th>
                 <th style={commonStyles.th(theme)}>Project</th>
                 <th style={commonStyles.th(theme)}>Squad</th>
                 <th style={commonStyles.th(theme)}>Added By</th>
-                <th style={commonStyles.th(theme)}>Defect Link</th>
-                <th style={commonStyles.th(theme)}>Summary</th>
+                <th style={commonStyles.th(theme)}>Defect</th>
                 <th style={commonStyles.th(theme)}>Priority</th>
                 <th style={commonStyles.th(theme)}>SIT Miss</th>
                 <th style={commonStyles.th(theme)}>Status</th>
                 <th style={commonStyles.th(theme)}>Related Story</th>
-                {!readOnly && <th style={commonStyles.th(theme)}>Delete</th>}
+                {!readOnly && <th style={{ ...commonStyles.th(theme), width: '76px' }}>Actions</th>}
               </tr>
             </thead>
             <tbody>
               {visibleDefects.length === 0 ? (
                 <tr>
-                  <td colSpan={readOnly ? 11 : 12} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '24px' }}>
+                  <td colSpan={readOnly ? 10 : 11} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '28px' }}>
+                    <div style={{ fontSize: '18px', marginBottom: '4px' }}>∅</div>
                     No defects logged yet.
                   </td>
                 </tr>
@@ -371,33 +371,41 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
                   if (row.priority === 'P1') priorityColor = theme.red;
                   else if (row.priority === 'P2') priorityColor = theme.orange;
                   else if (row.priority === 'P3') priorityColor = theme.amber;
+                  const statusColor = row.status === 'Open' ? theme.red
+                    : row.status === 'In Progress' ? theme.amber
+                      : row.status === 'Re-Opened' ? theme.orange
+                        : row.status === 'Resolved' ? theme.green
+                          : theme.muted;
 
                   return (
-                    <tr key={row.id} className={row.id === newRowId ? 'row-flash' : undefined} style={{ backgroundColor: index % 2 === 1 ? theme.inputBg : 'transparent' }}>
-                      <td style={commonStyles.td(theme)}>{formatDate(row.date)}</td>
+                    <tr key={row.id} className={row.id === newRowId ? 'row-flash' : undefined} style={{ backgroundColor: index % 2 === 1 ? `${theme.inputBg}cc` : 'transparent', borderLeft: `4px solid ${priorityColor}` }}>
+                      <td style={{ ...commonStyles.td(theme), whiteSpace: 'nowrap' }}>{formatDate(row.date)}</td>
                       <td style={commonStyles.td(theme)}>{row.release || '—'}</td>
                       <td style={commonStyles.td(theme)}>{projectMap.get(row.projectId) || 'Unknown'}</td>
                       <td style={commonStyles.td(theme)}>{squadMap.get(row.squadId) || 'Unknown'}</td>
                       <td style={commonStyles.td(theme)}>{row.addedByName}</td>
                       <td style={commonStyles.td(theme)}>
+                        <div style={{ maxWidth: '260px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <span title={row.jiraDefectSummary} style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.jiraDefectSummary}</span>
                         <a
                           href={row.jiraDefectLink}
                           target="_blank"
                           rel="noopener noreferrer"
-                          style={{ color: theme.blue, fontWeight: 500, textDecoration: 'none', wordBreak: 'break-all', fontSize: '13px' }}
+                            title={row.jiraDefectLink}
+                          style={{ color: theme.blue, fontWeight: 500, textDecoration: 'none', fontSize: '11px', display: 'inline-flex', gap: '4px', alignItems: 'center' }}
                         >
-                          Defect Link
+                            <ExternalLink size={12} /> Jira
                         </a>
+                        </div>
                       </td>
-                      <td style={{ ...commonStyles.td(theme), fontWeight: 500 }}>{row.jiraDefectSummary}</td>
                       
                       <td style={commonStyles.td(theme)}>
-                        <Badge label={row.priority} colorHex={priorityColor} theme={theme} />
+                        <span style={{ ...commonStyles.badge(theme, priorityColor), fontSize: '12px', padding: '4px 10px', fontWeight: 800 }}>{row.priority}</span>
                       </td>
 
                       <td style={commonStyles.td(theme)}>
                         {row.sitMiss ? (
-                          <Badge label="⚠ YES" colorHex={theme.red} theme={theme} />
+                          <span style={{ ...commonStyles.badge(theme, theme.red), fontSize: '12px', padding: '4px 9px', fontWeight: 900 }}>⚠ YES</span>
                         ) : (
                           <span style={{ color: theme.muted, fontSize: '13px' }}>No</span>
                         )}
@@ -411,8 +419,9 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
                             borderRadius: '12px',
                             fontSize: '12px',
                             fontWeight: 600,
-                            backgroundColor: row.status === 'Closed' ? `${theme.green}20` : `${theme.blue}20`,
-                            color: row.status === 'Closed' ? theme.green : theme.blue,
+                            backgroundColor: `${statusColor}20`,
+                            color: statusColor,
+                            border: `1px solid ${statusColor}33`,
                           }}
                         >
                           {row.status}
@@ -425,9 +434,10 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
                             href={row.storyLink}
                             target="_blank"
                             rel="noopener noreferrer"
-                            style={{ color: theme.blue, textDecoration: 'none', fontSize: '13px' }}
+                            title={row.storyLink}
+                            style={{ color: theme.blue, textDecoration: 'none', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                           >
-                            {row.storySummary || 'Related Story'}
+                            <ExternalLink size={12} /> {row.storySummary || 'Story'}
                           </a>
                         ) : (
                           <span style={{ color: theme.muted }}>—</span>
@@ -454,18 +464,7 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
 
                       {!readOnly && (
                         <td style={commonStyles.td(theme)}>
-                          <button
-                            onClick={() => handleDelete(row.id)}
-                            style={{
-                              padding: '4px',
-                              backgroundColor: 'transparent',
-                              border: 'none',
-                              color: theme.red,
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                            }}
-                          >
+                          <button onClick={() => handleDelete(row.id)} title="Delete defect" style={{ padding: '4px', backgroundColor: 'transparent', border: 'none', color: theme.red, cursor: 'pointer', display: 'flex', alignItems: 'center', width: '40px' }}>
                             <Trash2 size={16} />
                           </button>
                         </td>

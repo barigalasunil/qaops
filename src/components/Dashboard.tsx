@@ -266,65 +266,6 @@ export function Dashboard({ currentUser, appState, theme }: DashboardProps) {
         <StatCard animationIndex={13} label="P3 Defects" value={metrics.p3} accentColor={theme.amber} theme={theme} />
       </div>
 
-      {/* Project-wise Breakdown Table */}
-      <div style={commonStyles.card(theme)}>
-        <h3 style={{ fontSize: '13px', fontWeight: 700, color: theme.text, marginBottom: '10px', borderLeft: `3px solid ${theme.blue}`, paddingLeft: '6px', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
-          Project-wise Breakdown
-        </h3>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={commonStyles.table(theme)}>
-            <thead>
-              <tr style={{ backgroundColor: theme.inputBg }}>
-                <th style={commonStyles.th(theme)}>Project</th>
-                <th style={commonStyles.th(theme)}>Stories</th>
-                <th style={commonStyles.th(theme)}>TC Created</th>
-                <th style={commonStyles.th(theme)}>TC Executed</th>
-                <th style={commonStyles.th(theme)}>TC Passed</th>
-                <th style={commonStyles.th(theme)}>TC Failed</th>
-                <th style={commonStyles.th(theme)}>Coverage %</th>
-                <th style={commonStyles.th(theme)}>Pass %</th>
-                <th style={commonStyles.th(theme)}>Defects</th>
-                <th style={commonStyles.th(theme)}>SIT Misses</th>
-              </tr>
-            </thead>
-            <tbody>
-              {projectBreakdown.length === 0 ? (
-                <tr>
-                  <td colSpan={10} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '16px' }}>
-                    No project entries found for current filters.
-                  </td>
-                </tr>
-              ) : (
-                projectBreakdown.map((row, index) => {
-                  const cov = row.tcCreated > 0 ? (row.tcExecuted / row.tcCreated) * 100 : null;
-                  const pass = row.tcExecuted > 0 ? (row.tcPassed / row.tcExecuted) * 100 : null;
-                  return (
-                    <tr key={row.id} style={{ backgroundColor: index % 2 === 1 ? theme.inputBg : 'transparent' }}>
-                      <td style={{ ...commonStyles.td(theme), fontWeight: 700 }}>{row.name}</td>
-                      <td style={commonStyles.td(theme)}>{row.stories}</td>
-                      <td style={commonStyles.td(theme)}>{row.tcCreated}</td>
-                      <td style={commonStyles.td(theme)}>{row.tcExecuted}</td>
-                      <td style={commonStyles.td(theme)}>{row.tcPassed}</td>
-                      <td style={commonStyles.td(theme)}>{row.tcFailed}</td>
-                      <td style={{ ...commonStyles.td(theme), fontWeight: 600, color: cov !== null ? (cov >= 80 ? theme.green : cov >= 50 ? theme.amber : theme.red) : theme.text }}>
-                        {cov !== null ? `${cov.toFixed(1)}%` : '—'}
-                      </td>
-                      <td style={{ ...commonStyles.td(theme), fontWeight: 600, color: pass !== null ? (pass >= 80 ? theme.green : pass >= 50 ? theme.amber : theme.red) : theme.text }}>
-                        {pass !== null ? `${pass.toFixed(1)}%` : '—'}
-                      </td>
-                      <td style={commonStyles.td(theme)}>{row.defects}</td>
-                      <td style={{ ...commonStyles.td(theme), color: row.sitMisses > 0 ? theme.red : theme.text, fontWeight: row.sitMisses > 0 ? 700 : 'normal' }}>
-                        {row.sitMisses}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
       {/* Squad-wise Breakdown Table */}
       <div style={commonStyles.card(theme)}>
         <h3 style={{ fontSize: '13px', fontWeight: 700, color: theme.text, marginBottom: '10px', borderLeft: `3px solid ${theme.indigo}`, paddingLeft: '6px', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
@@ -355,6 +296,65 @@ export function Dashboard({ currentUser, appState, theme }: DashboardProps) {
                 </tr>
               ) : (
                 squadBreakdown.map((row, index) => {
+                  const cov = row.tcCreated > 0 ? (row.tcExecuted / row.tcCreated) * 100 : null;
+                  const pass = row.tcExecuted > 0 ? (row.tcPassed / row.tcExecuted) * 100 : null;
+                  return (
+                    <tr key={row.id} style={{ backgroundColor: index % 2 === 1 ? theme.inputBg : 'transparent' }}>
+                      <td style={{ ...commonStyles.td(theme), fontWeight: 700 }}>{row.name}</td>
+                      <td style={commonStyles.td(theme)}>{row.stories}</td>
+                      <td style={commonStyles.td(theme)}>{row.tcCreated}</td>
+                      <td style={commonStyles.td(theme)}>{row.tcExecuted}</td>
+                      <td style={commonStyles.td(theme)}>{row.tcPassed}</td>
+                      <td style={commonStyles.td(theme)}>{row.tcFailed}</td>
+                      <td style={{ ...commonStyles.td(theme), fontWeight: 600, color: cov !== null ? (cov >= 80 ? theme.green : cov >= 50 ? theme.amber : theme.red) : theme.text }}>
+                        {cov !== null ? `${cov.toFixed(1)}%` : '—'}
+                      </td>
+                      <td style={{ ...commonStyles.td(theme), fontWeight: 600, color: pass !== null ? (pass >= 80 ? theme.green : pass >= 50 ? theme.amber : theme.red) : theme.text }}>
+                        {pass !== null ? `${pass.toFixed(1)}%` : '—'}
+                      </td>
+                      <td style={commonStyles.td(theme)}>{row.defects}</td>
+                      <td style={{ ...commonStyles.td(theme), color: row.sitMisses > 0 ? theme.red : theme.text, fontWeight: row.sitMisses > 0 ? 700 : 'normal' }}>
+                        {row.sitMisses}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Project-wise Breakdown Table */}
+      <div style={commonStyles.card(theme)}>
+        <h3 style={{ fontSize: '13px', fontWeight: 700, color: theme.text, marginBottom: '10px', borderLeft: `3px solid ${theme.blue}`, paddingLeft: '6px', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+          Project-wise Breakdown
+        </h3>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={commonStyles.table(theme)}>
+            <thead>
+              <tr style={{ backgroundColor: theme.inputBg }}>
+                <th style={commonStyles.th(theme)}>Project</th>
+                <th style={commonStyles.th(theme)}>Stories</th>
+                <th style={commonStyles.th(theme)}>TC Created</th>
+                <th style={commonStyles.th(theme)}>TC Executed</th>
+                <th style={commonStyles.th(theme)}>TC Passed</th>
+                <th style={commonStyles.th(theme)}>TC Failed</th>
+                <th style={commonStyles.th(theme)}>Coverage %</th>
+                <th style={commonStyles.th(theme)}>Pass %</th>
+                <th style={commonStyles.th(theme)}>Defects</th>
+                <th style={commonStyles.th(theme)}>SIT Misses</th>
+              </tr>
+            </thead>
+            <tbody>
+              {projectBreakdown.length === 0 ? (
+                <tr>
+                  <td colSpan={10} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '16px' }}>
+                    No project entries found for current filters.
+                  </td>
+                </tr>
+              ) : (
+                projectBreakdown.map((row, index) => {
                   const cov = row.tcCreated > 0 ? (row.tcExecuted / row.tcCreated) * 100 : null;
                   const pass = row.tcExecuted > 0 ? (row.tcPassed / row.tcExecuted) * 100 : null;
                   return (

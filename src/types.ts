@@ -10,6 +10,7 @@ export interface UserPermissions {
   releases: 'edit' | 'view' | 'none';
   timesheet: 'edit' | 'view' | 'none';
   export: 'edit' | 'view' | 'none';
+  holidayList: 'edit' | 'view' | 'none';
   settings: 'edit' | 'view' | 'none';
 }
 
@@ -54,12 +55,15 @@ export interface DataEntry {
   jiraStoryLink: string;
   jiraStorySummary: string;
   tcCreated: number;
-  tcExecuted: number;
-  tcPassed: number;
-  tcFailed: number;
+  tcExecuted: number | null;
+  tcPassed: number | null;
+  tcFailed: number | null;
   notes: string;
   addedBy: string;
   addedByName: string;
+  lastEditedBy: string | null;
+  lastEditedAt: string | null;
+  lastEditedByRole: User['role'] | null;
   customFields?: Record<string, any>;
 }
 
@@ -102,9 +106,11 @@ export interface WorkingDay {
   dayName: string;
   isWeekendDay: boolean;
   status: 'Weekend' | 'Working' | 'Leave' | 'Holiday' | 'WFH' | 'Training';
+  isStatusSet: boolean;
   isNightDeployment: boolean;
   isWeekendSupport: boolean;
   notes: string;
+  workLocation: string | null;
   lastModifiedBy: string | null;
   lastModifiedByRole: User['role'] | null;
   lastModifiedAt: string | null;
@@ -112,6 +118,16 @@ export interface WorkingDay {
   // Legacy fields retained for loading older localStorage records.
   isNightShift?: boolean;
   isWeekend?: boolean;
+}
+
+export interface Holiday {
+  id: string;
+  date: string;
+  name: string;
+  type: 'Holiday' | 'Optional Holiday';
+  year: number;
+  createdBy: string;
+  createdAt: string;
 }
 
 export interface TimesheetEntry {
@@ -140,5 +156,6 @@ export interface AppState {
   defects: Defect[];
   releaseEntries: ReleaseEntry[];
   timesheetEntries: TimesheetEntry[];
+  holidays: Holiday[];
   customFields: CustomField[];
 }

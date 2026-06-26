@@ -11,6 +11,7 @@ import {
   Layers,
   Clock,
   Download,
+  CalendarCheck,
   Settings as SettingsIcon,
   LogOut,
   Sun,
@@ -55,7 +56,7 @@ export function Sidebar({
 
   const visibleItems = navItems.filter((item) => {
     const permissions = getEffectivePermissions(currentUser);
-    return permissions[item.id as keyof typeof permissions] !== 'none';
+    return item.roles.includes(currentUser.role) && permissions[item.id as keyof typeof permissions] !== 'none';
   });
 
   const roleColor = {

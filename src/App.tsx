@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { getTheme, commonStyles } from './theme';
 import { AppState, User } from './types';
-import { getEffectivePermissions, getPermissionsForRole, hashPassword, isPasswordHash, scopeAppStateForUser } from './utils';
+import { formatTime, getEffectivePermissions, getPermissionsForRole, hashPassword, isPasswordHash, scopeAppStateForUser } from './utils';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
 import { DataEntry } from './components/DataEntry';
@@ -38,7 +38,8 @@ const INITIAL_APP_STATE: AppState = {
         defects: 'edit',
         releases: 'edit',
         timesheet: 'edit',
-        export: 'edit',
+  export: 'edit',
+        holidayList: 'edit',
         settings: 'edit',
       },
       createdBy: 'system',
@@ -57,6 +58,7 @@ const INITIAL_APP_STATE: AppState = {
   defects: [],
   releaseEntries: [],
   timesheetEntries: [],
+  holidays: [],
   customFields: [],
 };
 
@@ -140,6 +142,15 @@ export default function App() {
           ...s,
           projectId: s.projectId ?? (parsed.projects?.length === 1 ? parsed.projects[0].id : null),
         }));
+        parsed.dataEntries = (parsed.dataEntries || []).map((entry: any) => ({
+          ...entry,
+          tcExecuted: entry.tcExecuted ?? null,
+          tcPassed: entry.tcPassed ?? null,
+          tcFailed: entry.tcFailed ?? null,
+          lastEditedBy: entry.lastEditedBy ?? null,
+          lastEditedAt: entry.lastEditedAt ?? null,
+          lastEditedByRole: entry.lastEditedByRole ?? null,
+        }));
         parsed.timesheetEntries = (parsed.timesheetEntries || []).map((entry: any) => ({
           ...entry,
           workingDays: (entry.workingDays || []).map((day: any) => {
@@ -149,8 +160,10 @@ export default function App() {
               ...day,
               dayName: day.dayName || date.toLocaleDateString('en-GB', { weekday: 'short' }),
               isWeekendDay: day.isWeekendDay ?? isWeekendDay,
+              isStatusSet: day.isStatusSet ?? true,
               isNightDeployment: day.isNightDeployment ?? day.isNightShift ?? false,
               isWeekendSupport: day.isWeekendSupport ?? false,
+              workLocation: day.workLocation ?? null,
               lastModifiedBy: day.lastModifiedBy ?? null,
               lastModifiedByRole: day.lastModifiedByRole ?? null,
               lastModifiedAt: day.lastModifiedAt ?? null,
@@ -165,6 +178,12 @@ export default function App() {
         if (!parsed.releaseNames) {
           parsed.releaseNames = [];
         }
+        parsed.holidays = (parsed.holidays || []).map((holiday: any) => ({
+          ...holiday,
+          year: holiday.year ?? Number(String(holiday.date || '').slice(0, 4)),
+          createdBy: holiday.createdBy ?? 'Unknown',
+          createdAt: holiday.createdAt ?? new Date().toISOString(),
+        }));
         return parsed;
       } catch (e) {
         // fallback to initial
@@ -229,10 +248,10 @@ export default function App() {
   }, [appState.users, currentUser]);
 
   // Toast Alerts Notification state
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; exiting?: boolean } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning'; duration?: number; exiting?: boolean } | null>(null);
 
-  const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
-    setToast({ message, type });
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'warning' = 'success', duration = 2550) => {
+    setToast({ message, type, duration });
   }, []);
 
   useEffect(() => {
@@ -241,7 +260,7 @@ export default function App() {
       () => toast.exiting
         ? setToast(null)
         : setToast(current => current ? { ...current, exiting: true } : null),
-      toast.exiting ? 250 : 2550
+      toast.exiting ? 250 : (toast.duration || 2550)
     );
     return () => clearTimeout(timer);
   }, [toast]);
@@ -296,7 +315,7 @@ export default function App() {
 
     if (candidate.lockedUntil && Date.now() < candidate.lockedUntil) {
       const minutes = Math.ceil((candidate.lockedUntil - Date.now()) / 60000);
-      showToast(`Account locked. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`, 'error');
+      showToast(`Account locked. Try again at ${formatTime(new Date(candidate.lockedUntil).toISOString())} (${minutes} minute${minutes === 1 ? '' : 's'}).`, 'error');
       return;
     }
 
@@ -412,12 +431,7 @@ export default function App() {
     year: 'numeric',
   });
 
-  const formattedTime = currentTime.toLocaleTimeString('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
+  const formattedTime = formatTime(currentTime.toISOString());
 
   const scopedAppState = useMemo(
     () => currentUser ? scopeAppStateForUser(appState, currentUser) : appState,

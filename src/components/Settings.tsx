@@ -9,7 +9,7 @@ import { AppState, CustomField, Project, Squad, User, UserPermissions } from '..
 import { generateId, getPermissionsForRole, hashPassword, sanitise } from '../utils';
 import { Field } from './Shared';
 import { PermissionsTable } from './PermissionsTable';
-import { Plus, Trash2, Shield, UserX, UserCheck, Key, Settings as SettingsIcon } from 'lucide-react';
+import { Plus, Trash2, Shield, UserX, UserCheck, Key, Settings as SettingsIcon, X } from 'lucide-react';
 
 interface SettingsProps {
   currentUser: User;
@@ -32,6 +32,9 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
     confirmPassword: '',
   });
   const [accountErrors, setAccountErrors] = useState<Record<string, string>>({});
+  const [resetPasswordUser, setResetPasswordUser] = useState<User | null>(null);
+  const [resetPasswordForm, setResetPasswordForm] = useState({ password: '', confirm: '' });
+  const [resetPasswordErrors, setResetPasswordErrors] = useState<Record<string, string>>({});
   const updateAccountForm = (key: keyof typeof editAccountForm, value: string) => {
     setEditAccountForm(previous => ({ ...previous, [key]: value }));
     setAccountErrors(previous => {
@@ -241,19 +244,39 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
     showToast('User demoted to Member.', 'success');
   };
 
+  const validatePasswordPair = (password: string, confirm: string) => {
+    const nextErrors: Record<string, string> = {};
+    if (!password) nextErrors.password = 'New Password is required.';
+    else if (password.length < 8) nextErrors.password = 'Password must be at least 8 characters.';
+    else if (!/[A-Z]/.test(password)) nextErrors.password = 'Password must include an uppercase letter.';
+    else if (!/\d/.test(password)) nextErrors.password = 'Password must include a number.';
+    if (!confirm) nextErrors.confirm = 'Confirm Password is required.';
+    else if (password !== confirm) nextErrors.confirm = 'Passwords do not match.';
+    return nextErrors;
+  };
+
   const handleResetPassword = (userId: string) => {
     const target = appState.users.find(u => u.id === userId);
     if (!target || (!isSuperAdmin && (target.role === 'admin' || target.role === 'superadmin'))) return;
-      const newPassword = prompt('Enter new password for this user:');
-    if (newPassword && newPassword.trim()) {
-      hashPassword(newPassword.trim()).then(password => {
-      setAppState((prev) => ({
-        ...prev,
-        users: prev.users.map((u) => (u.id === userId ? { ...u, password, mustChangePassword: true } : u)),
-      }));
-      showToast('Password reset successful.', 'success');
-      });
-    }
+    setResetPasswordUser(target);
+    setResetPasswordForm({ password: '', confirm: '' });
+    setResetPasswordErrors({});
+  };
+
+  const handleSaveResetPassword = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!resetPasswordUser) return;
+    const nextErrors = validatePasswordPair(resetPasswordForm.password, resetPasswordForm.confirm);
+    setResetPasswordErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    const password = await hashPassword(resetPasswordForm.password.trim());
+    setAppState((prev) => ({
+      ...prev,
+      users: prev.users.map((u) => (u.id === resetPasswordUser.id ? { ...u, password, mustChangePassword: true } : u)),
+    }));
+    setResetPasswordUser(null);
+    setResetPasswordForm({ password: '', confirm: '' });
+    showToast('Password reset successful.', 'success');
   };
 
   const handleRemoveUser = (userId: string) => {
@@ -1093,6 +1116,52 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
             </div>
           </div>
 
+        </div>
+      )}
+
+      {resetPasswordUser && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, backgroundColor: 'rgba(15,23,42,0.58)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '18px', animation: 'modalBackdropIn 160ms ease-out' }}>
+          <form noValidate onSubmit={handleSaveResetPassword} style={{ ...commonStyles.card(theme), width: '100%', maxWidth: '440px', padding: '28px', animation: 'modalPanelIn 180ms ease-out' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '18px' }}>
+              <h3 style={{ margin: 0, fontSize: '18px' }}>Reset Password for {resetPasswordUser.username}</h3>
+              <button type="button" onClick={() => setResetPasswordUser(null)} style={{ border: 0, background: 'transparent', color: theme.muted, cursor: 'pointer' }}><X size={18} /></button>
+            </div>
+            <div style={{ display: 'grid', gap: '14px' }}>
+              <Field
+                label="New Password"
+                type="password"
+                value={resetPasswordForm.password}
+                onChange={(value) => {
+                  setResetPasswordForm(previous => ({ ...previous, password: value }));
+                  setResetPasswordErrors(previous => ({ ...previous, password: '' }));
+                }}
+                error={resetPasswordErrors.password}
+                required
+                theme={theme}
+              />
+              {resetPasswordForm.password && (
+                <div style={{ color: resetPasswordForm.password.length >= 12 && /[A-Z]/.test(resetPasswordForm.password) && /\d/.test(resetPasswordForm.password) ? theme.green : resetPasswordForm.password.length >= 8 && /[A-Z]/.test(resetPasswordForm.password) && /\d/.test(resetPasswordForm.password) ? theme.amber : theme.red, fontSize: '11px', fontWeight: 700, marginTop: '-8px' }}>
+                  Strength: {resetPasswordForm.password.length >= 12 && /[A-Z]/.test(resetPasswordForm.password) && /\d/.test(resetPasswordForm.password) ? 'Strong' : resetPasswordForm.password.length >= 8 && /[A-Z]/.test(resetPasswordForm.password) && /\d/.test(resetPasswordForm.password) ? 'Fair' : 'Weak'}
+                </div>
+              )}
+              <Field
+                label="Confirm Password"
+                type="password"
+                value={resetPasswordForm.confirm}
+                onChange={(value) => {
+                  setResetPasswordForm(previous => ({ ...previous, confirm: value }));
+                  setResetPasswordErrors(previous => ({ ...previous, confirm: '' }));
+                }}
+                error={resetPasswordErrors.confirm}
+                required
+                theme={theme}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
+              <button type="button" onClick={() => setResetPasswordUser(null)} style={commonStyles.button(theme, 'secondary')}>Cancel</button>
+              <button type="submit" style={commonStyles.button(theme, 'primary')}>Save</button>
+            </div>
+          </form>
         </div>
       )}
 

@@ -10,13 +10,15 @@ import { Project, Squad, AppState } from '../types';
 
 // Toast Notification
 interface ToastProps {
-  toast: { message: string; type: 'success' | 'error'; exiting?: boolean } | null;
+  toast: { message: string; type: 'success' | 'error' | 'warning'; exiting?: boolean } | null;
   theme: ThemeTokens;
 }
 
 export function Toast({ toast, theme }: ToastProps) {
   if (!toast) return null;
   const isSuccess = toast.type === 'success';
+  const isWarning = toast.type === 'warning';
+  const accent = isSuccess ? theme.green : isWarning ? theme.amber : theme.red;
   return (
     <div
       id="toast-notification"
@@ -27,7 +29,7 @@ export function Toast({ toast, theme }: ToastProps) {
         right: '24px',
         backgroundColor: theme.surface,
         color: theme.text,
-        border: `1px solid ${isSuccess ? theme.green : theme.red}`,
+        border: `1px solid ${accent}`,
         borderRadius: '8px',
         padding: '12px 20px',
         boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
@@ -46,11 +48,11 @@ export function Toast({ toast, theme }: ToastProps) {
           width: '24px',
           height: '24px',
           borderRadius: '50%',
-          backgroundColor: isSuccess ? `${theme.green}20` : `${theme.red}20`,
-          color: isSuccess ? theme.green : theme.red,
+          backgroundColor: `${accent}20`,
+          color: accent,
         }}
       >
-        {isSuccess ? <Check size={16} /> : <X size={16} />}
+        {isSuccess ? <Check size={16} /> : isWarning ? <AlertTriangle size={16} /> : <X size={16} />}
       </div>
       <span style={{ fontSize: '14px', fontWeight: 500 }}>{toast.message}</span>
     </div>

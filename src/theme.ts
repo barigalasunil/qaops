@@ -126,18 +126,23 @@ export const commonStyles = {
     fontSize: '12px',
   }),
   th: (theme: ThemeTokens) => ({
-    padding: '10px 16px',
+    padding: '10px 14px',
     borderBottom: `2px solid ${theme.border}`,
     textAlign: 'left' as const,
     fontWeight: 600,
     color: theme.muted,
-    fontSize: '11px',
+    fontSize: '10px',
     textTransform: 'uppercase' as const,
-    letterSpacing: '0.05em',
+    letterSpacing: '0',
+    position: 'sticky' as const,
+    top: 0,
+    zIndex: 2,
+    backgroundColor: theme.inputBg,
   }),
   td: (theme: ThemeTokens) => ({
-    padding: '10px 16px',
+    padding: '11px 14px',
     borderBottom: `1px solid ${theme.border}`,
     color: theme.text,
+    fontSize: '12px',
   })
 };
