@@ -243,47 +243,6 @@ export function generateStrongPassword(): string {
   return password;
 }
 
-export function maskEmail(email: string): string {
-  const atIndex = email.indexOf('@');
-  if (atIndex < 4) return email.slice(0, 1) + '***' + email.slice(atIndex);
-  return email.slice(0, 3) + '***' + email.slice(atIndex);
-}
-
-export const LOGIN_INSTRUCTIONS_TEXT = `
-HOW TO LOG IN:
-1. Open the App URL in your browser
-2. Enter your username and password
-3. On first login you will be prompted to change your password
-4. Choose a strong password (min 8 characters, one uppercase letter, one number)
-
-HOW TO LOG OUT:
-- Click the sign out button at the bottom of the left sidebar
-- Your session automatically locks after 10 minutes of inactivity
-- Closing your browser tab ends your session
-`;
-
-export function getRoleSummary(role: string): string {
-  const summaries: Record<string, string> = {
-    superadmin: 'You have full access to the entire QA Hub platform across all projects. You are responsible for platform setup, user management, and organisation-wide oversight.',
-    admin: 'You have full access within your assigned project. You manage your team, oversee QA activities, approve leave, and export project reports.',
-    lead: 'You manage your squad. You review metrics, approve your team\'s leave requests, and log your own QA work.',
-    member: 'You log your daily QA work — stories tested, defects found, and your monthly timesheet.',
-    guest: 'You have read-only access to the Dashboard metrics and Team Structure for your project. You can download summary reports.',
-  };
-  return summaries[role] || '';
-}
-
-export function getFirstSteps(role: string): string {
-  const steps: Record<string, string> = {
-    superadmin: '1. Change your default password immediately\n2. Add your Projects in Settings\n3. Add Squads under each Project\n4. Create Admin accounts for each Project\n5. Add Releases and Holiday List',
-    admin: '1. Change your default password immediately\n2. Create Lead accounts for your squads\n3. Ensure team members are correctly assigned\n4. Add your project\'s releases',
-    lead: '1. Change your default password immediately\n2. Review your squad members in Team Structure\n3. Start logging data entries and defects\n4. Check the Dashboard for your project metrics',
-    member: '1. Change your default password immediately\n2. Fill your timesheet for the current month\n3. Start logging stories tested and defects found',
-    guest: '1. Change your default password immediately\n2. Visit the Dashboard to view project metrics\n3. Use Export to download summary reports',
-  };
-  return steps[role] || '';
-}
-
 export function getCurrentWeekRange(): { weekStart: string; weekEnd: string; weekRange: string } {
   const now = new Date();
   const dayOfWeek = now.getDay();
@@ -323,30 +282,42 @@ export function computeWeekMetrics(appState: AppState, weekStart: string, weekEn
   };
 }
 
-export async function sendEmailJS(
-  config: { enabled: boolean; publicKey: string; serviceId: string; senderName: string; replyTo: string; appUrl: string },
-  templateId: string,
-  templateParams: Record<string, any>
-): Promise<{ success: boolean; reason?: string }> {
-  if (!config.enabled || !config.publicKey || !config.serviceId || !templateId) {
-    return { success: false, reason: 'EmailJS not configured or disabled' };
-  }
-  const w = window as any;
-  if (!w.emailjs) {
-    return { success: false, reason: 'EmailJS SDK not loaded' };
-  }
-  try {
-    await w.emailjs.send(config.serviceId, templateId, {
-      ...templateParams,
-      sender_name: config.senderName || 'QA Hub',
-      reply_to: config.replyTo || '',
-      app_url: config.appUrl || '[ App URL — please update in Settings → Email Config ]',
-    });
-    return { success: true };
-  } catch (err: any) {
-    console.error('EmailJS send failed:', err);
-    return { success: false, reason: err?.text || err?.message || 'Unknown error' };
-  }
+export function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return 'Good morning';
+  if (hour >= 12 && hour < 17) return 'Good afternoon';
+  if (hour >= 17 && hour < 21) return 'Good evening';
+  return 'Good night';
+}
+
+export function getRelativeTime(isoString: string): string {
+  const now = Date.now();
+  const then = new Date(isoString).getTime();
+  const diff = now - then;
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days} days ago`;
+  return new Date(isoString).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+}
+
+export function getNext14DaysRange(): { today: string; end: string } {
+  const today = new Date();
+  const end = new Date(today);
+  end.setDate(end.getDate() + 14);
+  return {
+    today: today.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+  };
+}
+
+export function formatDateToFull(isoString: string): string {
+  const d = new Date(isoString + 'T00:00:00');
+  return d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 export const exportToCSV = (data: any[], fileName: string) => {

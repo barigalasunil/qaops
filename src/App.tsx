@@ -10,7 +10,9 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { getTheme, commonStyles } from './theme';
 import { AppState, AuditLogEntry, User } from './types';
-import { formatTime, generateId, getEffectivePermissions, getPermissionsForRole, hashPassword, isPasswordHash, scopeAppStateForUser, sendEmailJS, maskEmail, getCurrentWeekRange, computeWeekMetrics } from './utils';
+import { formatTime, generateId, getEffectivePermissions, getPermissionsForRole, hashPassword, isPasswordHash, scopeAppStateForUser } from './utils';
+
+const APP_NAME = "QA Pulse";
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
 import { DataEntry } from './components/DataEntry';
@@ -24,6 +26,7 @@ import { Announcements } from './components/Announcements';
 import { LeaveRequests } from './components/LeaveRequests';
 import { BackupRestore } from './components/BackupRestore';
 import { BulkImport } from './components/BulkImport';
+import { Home } from './components/Home';
 import { Toast } from './components/Shared';
 import { Bell, HelpCircle, UserCheck, X } from 'lucide-react';
 
@@ -48,13 +51,15 @@ const INITIAL_APP_STATE: AppState = {
         defects: 'edit',
         releases: 'edit',
         timesheet: 'edit',
-  export: 'edit',
+        export: 'edit',
         holidayList: 'edit',
         settings: 'edit',
       },
       createdBy: 'system',
       createdByRole: 'superadmin',
       mustChangePassword: false,
+      birthday: null,
+      loginCountWithoutBirthday: 0,
       loginCount: 0,
       failedLoginAttempts: 0,
       lockedUntil: null,
@@ -63,6 +68,7 @@ const INITIAL_APP_STATE: AppState = {
       reportsTo: null,
       directReports: [],
       jobTitle: 'Platform Owner',
+      baseOffice: 'Bengaluru',
       notifications: [],
     },
   ],
@@ -81,19 +87,8 @@ const INITIAL_APP_STATE: AppState = {
   announcements: [],
   leaveRequests: [],
   backupMetadata: [],
-  emailConfig: {
-    enabled: false,
-    publicKey: '',
-    serviceId: '',
-    appUrl: '',
-    templates: {
-      welcome: '',
-      weeklySummary: '',
-    },
-    senderName: 'QA Hub',
-    replyTo: '',
-  },
-  emailLog: [],
+  recognitions: [],
+  sprints: [],
 };
 
 export default function App() {
@@ -174,7 +169,10 @@ export default function App() {
             loginHistory: u.loginHistory ?? [],
             reportsTo: u.reportsTo ?? (role === 'superadmin' ? null : u.createdBy ?? null),
             directReports: u.directReports ?? [],
+            birthday: u.birthday ?? null,
+            loginCountWithoutBirthday: u.loginCountWithoutBirthday ?? 0,
             jobTitle: u.jobTitle ?? '',
+            baseOffice: u.baseOffice === 'Mumbai' ? 'Mumbai' : 'Bengaluru',
             notifications: (u.notifications || []).map((notification: any) => ({
               id: notification.id || crypto.randomUUID?.() || Math.random().toString(36).slice(2),
               message: notification.message || 'Notification',
@@ -207,16 +205,21 @@ export default function App() {
           tcExecuted: entry.tcExecuted ?? null,
           tcPassed: entry.tcPassed ?? null,
           tcFailed: entry.tcFailed ?? null,
+          storyPoints: entry.storyPoints ?? null,
           lastEditedBy: entry.lastEditedBy ?? null,
           lastEditedAt: entry.lastEditedAt ?? null,
           lastEditedByRole: entry.lastEditedByRole ?? null,
           storyStatus: entry.storyStatus ?? 'In Progress',
+          sprintId: entry.sprintId ?? '',
+          sprintName: entry.sprintName ?? '',
         }));
         parsed.defects = (parsed.defects || []).map((defect: any) => ({
           ...defect,
           jiraCreatedDate: defect.jiraCreatedDate ?? defect.date ?? null,
           resolvedDate: defect.resolvedDate ?? ((defect.status === 'Resolved' || defect.status === 'Closed') ? defect.date : null),
           statusHistory: defect.statusHistory ?? [{ status: defect.status, changedBy: defect.addedByName || 'Unknown', changedAt: defect.date ? `${defect.date}T00:00:00.000Z` : new Date().toISOString() }],
+          sprintId: defect.sprintId ?? '',
+          sprintName: defect.sprintName ?? '',
         }));
         parsed.timesheetEntries = (parsed.timesheetEntries || []).map((entry: any) => ({
           ...entry,
@@ -231,6 +234,7 @@ export default function App() {
               isNightDeployment: day.isNightDeployment ?? day.isNightShift ?? false,
               isWeekendSupport: day.isWeekendSupport ?? false,
               workLocation: day.workLocation ?? null,
+              locationAudit: day.locationAudit ?? null,
               lastModifiedBy: day.lastModifiedBy ?? null,
               lastModifiedByRole: day.lastModifiedByRole ?? null,
               lastModifiedAt: day.lastModifiedAt ?? null,
@@ -241,9 +245,16 @@ export default function App() {
         parsed.releaseEntries = (parsed.releaseEntries || []).map((entry: any) => ({
           ...entry,
           createdAt: entry.createdAt || `${entry.releaseDate || new Date().toISOString().slice(0, 10)}T00:00:00.000Z`,
+          totalStoryPoints: entry.totalStoryPoints ?? null,
+          uatStoryPoints: entry.uatStoryPoints ?? null,
+          lastEditedBy: entry.lastEditedBy ?? null,
+          lastEditedAt: entry.lastEditedAt ?? null,
         }));
         if (!parsed.releaseNames) {
           parsed.releaseNames = [];
+        }
+        if (!parsed.sprints) {
+          parsed.sprints = [];
         }
         parsed.projects = parsed.projects || [];
         parsed.squads = parsed.squads || [];
@@ -252,6 +263,7 @@ export default function App() {
         parsed.defects = parsed.defects || [];
         parsed.releaseEntries = parsed.releaseEntries || [];
         parsed.timesheetEntries = parsed.timesheetEntries || [];
+        parsed.sprints = parsed.sprints || [];
         parsed.customFields = parsed.customFields || [];
         parsed.auditLog = parsed.auditLog || [];
         parsed.notifications = (parsed.notifications || []).map((notification: any) => ({
@@ -290,31 +302,18 @@ export default function App() {
           reviewedBy: lr.reviewedBy ?? null,
           rejectionReason: lr.rejectionReason ?? null,
         }));
-        if (!parsed.emailConfig) {
-          parsed.emailConfig = { ...INITIAL_APP_STATE.emailConfig };
-        } else {
-          const ec = parsed.emailConfig;
-          parsed.emailConfig = {
-            enabled: ec.enabled ?? false,
-            publicKey: ec.publicKey || '',
-            serviceId: ec.serviceId || '',
-            appUrl: ec.appUrl || '',
-            templates: {
-              welcome: ec.templates?.welcome || '',
-              weeklySummary: ec.templates?.weeklySummary || '',
-            },
-            senderName: ec.senderName || 'QA Hub',
-            replyTo: ec.replyTo || '',
-          };
-        }
-        parsed.emailLog = (parsed.emailLog || []).map((el: any) => ({
-          id: el.id || generateId(),
-          sentAt: el.sentAt || new Date().toISOString(),
-          templateType: ['welcome', 'weeklySummary'].includes(el.templateType) ? el.templateType : 'welcome',
-          to: el.to || '',
-          toUsername: el.toUsername || '',
-          status: el.status === 'sent' ? 'sent' : 'failed',
-          errorReason: el.errorReason ?? null,
+        parsed.recognitions = (parsed.recognitions || []).map((r: any) => ({
+          id: r.id || generateId(),
+          fromUserId: r.fromUserId || '',
+          fromUsername: r.fromUsername || '',
+          toUserId: r.toUserId || '',
+          toUsername: r.toUsername || '',
+          toSquad: r.toSquad || '',
+          toProject: r.toProject || '',
+          message: r.message || '',
+          emoji: ['🌟', '🏆', '💪', '🎯', '🔥', '👏', '🚀', '💡'].includes(r.emoji) ? r.emoji : '🌟',
+          projectId: r.projectId || '',
+          createdAt: r.createdAt || new Date().toISOString(),
         }));
         parsed.backupMetadata = (parsed.backupMetadata || []).map((bm: any) => ({
           id: bm.id || generateId(),
@@ -358,7 +357,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (migrationReady) localStorage.setItem(STORE_KEY, JSON.stringify(appState));
+    if (migrationReady) {
+      localStorage.setItem(STORE_KEY, JSON.stringify(appState));
+    }
   }, [appState, migrationReady]);
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -372,6 +373,10 @@ export default function App() {
   const [unlockError, setUnlockError] = useState('');
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [showBirthdayPrompt, setShowBirthdayPrompt] = useState(false);
+  const [pendingBirthdayPrompt, setPendingBirthdayPrompt] = useState(false);
+  const [birthdayDay, setBirthdayDay] = useState('');
+  const [birthdayMonth, setBirthdayMonth] = useState('');
   const [loggedInSince, setLoggedInSince] = useState<string | null>(null);
   const [profileName, setProfileName] = useState('');
   const [profileTitle, setProfileTitle] = useState('');
@@ -419,7 +424,7 @@ export default function App() {
         'box-shadow:0 24px 80px rgba(0,0,0,0.35)',
         'overflow:auto',
       ].join(';');
-      panel.innerHTML = `<h2 style="margin:0 0 8px;color:${theme.red};font-size:18px">QA Hub hit a runtime error</h2><p style="margin:0 0 12px;color:${theme.muted};font-size:13px">Reload once after this patch. If this message remains, share the text below.</p><pre style="white-space:pre-wrap;font-size:12px">${message.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;' }[char] || char))}</pre>`;
+      panel.innerHTML = `<h2 style="margin:0 0 8px;color:${theme.red};font-size:18px">${APP_NAME} hit a runtime error</h2><p style="margin:0 0 12px;color:${theme.muted};font-size:13px">Reload once after this patch. If this message remains, share the text below.</p><pre style="white-space:pre-wrap;font-size:12px">${message.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;' }[char] || char))}</pre>`;
       document.body.appendChild(panel);
     };
     const onError = (event: ErrorEvent) => showRuntimeError(event.error?.stack || event.message || 'Unknown runtime error');
@@ -481,82 +486,6 @@ export default function App() {
   }, [toast]);
 
   useEffect(() => {
-    if (document.getElementById('emailjs-sdk')) return;
-    const script = document.createElement('script');
-    script.id = 'emailjs-sdk';
-    script.src = 'https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js';
-    script.onload = () => {
-      const config = (JSON.parse(localStorage.getItem(STORE_KEY) || '{}')).emailConfig;
-      if ((window as any).emailjs && config?.publicKey) {
-        (window as any).emailjs.init({ publicKey: config.publicKey });
-      }
-    };
-    document.head.appendChild(script);
-  }, []);
-
-  useEffect(() => {
-    if ((window as any).emailjs && appState.emailConfig?.enabled && appState.emailConfig?.publicKey) {
-      (window as any).emailjs.init({ publicKey: appState.emailConfig.publicKey });
-    }
-  }, [appState.emailConfig]);
-
-  // Weekly Summary Friday trigger
-  useEffect(() => {
-    if (!migrationReady) return;
-    if (!appState.emailConfig?.enabled || !appState.emailConfig?.templates?.weeklySummary) return;
-    const today = new Date();
-    if (today.getDay() !== 5) return;
-    const alreadySent = sessionStorage.getItem('weeklySummaryEmailSent');
-    if (alreadySent === today.toDateString()) return;
-    const { weekStart, weekEnd, weekRange } = getCurrentWeekRange();
-    const recipients = appState.users.filter(u =>
-      (u.role === 'admin' || u.role === 'lead' || u.role === 'superadmin') && u.email
-    );
-    if (recipients.length === 0) return;
-    const metrics = computeWeekMetrics(appState, weekStart, weekEnd);
-    (async () => {
-      for (const user of recipients) {
-        const result = await sendEmailJS(
-          appState.emailConfig,
-          appState.emailConfig.templates.weeklySummary,
-          {
-            to_email: user.email,
-            to_name: user.username,
-            week_range: weekRange,
-            stories_tested: metrics.stories,
-            tc_created: metrics.tcCreated,
-            tc_executed: metrics.tcExecuted,
-            tc_passed: metrics.tcPassed,
-            tc_failed: metrics.tcFailed,
-            pass_rate: metrics.passRate + '%',
-            defects_raised: metrics.defects,
-            sit_misses: metrics.sitMisses,
-            p1_count: metrics.p1,
-            p2_count: metrics.p2,
-            p3_count: metrics.p3,
-            project_filter: 'All Projects',
-            squad_filter: 'All Squads',
-            generated_by: 'QA Hub (Automated)',
-          }
-        );
-        setAppState(prev => ({
-          ...prev,
-          emailLog: [{
-            id: generateId(),
-            sentAt: new Date().toISOString(),
-            templateType: 'weeklySummary' as const,
-            to: maskEmail(user.email),
-            toUsername: user.username,
-            status: result.success ? 'sent' as const : 'failed' as const,
-            errorReason: result.success ? null : (result.reason || null),
-          }, ...(prev.emailLog || [])].slice(0, 200),
-        }));
-      }
-      sessionStorage.setItem('weeklySummaryEmailSent', today.toDateString());
-    })();
-  }, [migrationReady, appState.emailConfig?.enabled]);
-
-  useEffect(() => {
     if (document.getElementById('qa-hub-animations')) return;
     const style = document.createElement('style');
     style.id = 'qa-hub-animations';
@@ -570,6 +499,7 @@ export default function App() {
       @keyframes modalPanelIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
       @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       @keyframes shimmer { from { background-position: -220px 0; } to { background-position: 220px 0; } }
+      @keyframes birthdayPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.9; transform: scale(1.01); } }
       .page-enter { animation: pageEnter 0.2s ease-out forwards; }
       .row-flash { animation: rowFlash 1.5s ease forwards; }
       .toast-in { animation: toastIn 0.3s ease-out forwards; }
@@ -587,16 +517,7 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState('');
 
   const getFirstAccessibleTab = (user: User): string => {
-    const perms = getEffectivePermissions(user);
-    if (perms.dashboard !== 'none') return 'dashboard';
-    if (perms.dataEntry !== 'none') return 'dataEntry';
-    if (perms.defects !== 'none') return 'defects';
-    if (perms.releases !== 'none') return 'releases';
-    if (perms.timesheet !== 'none') return 'timesheet';
-    if (user.role !== 'member') return 'teamStructure';
-    if (perms.export !== 'none') return 'export';
-    if (perms.settings !== 'none') return 'settings';
-    return 'dashboard';
+    return 'home'; // Home is the first page for all roles
   };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -616,9 +537,11 @@ export default function App() {
 
     const enteredHash = await hashPassword(loginPassword.trim());
     if (candidate.password === enteredHash) {
+      const birthdayNull = !candidate.birthday;
       const updatedUser: User = {
         ...candidate,
         loginCount: candidate.loginCount + 1,
+        loginCountWithoutBirthday: birthdayNull ? (candidate.loginCountWithoutBirthday || 0) + 1 : candidate.loginCountWithoutBirthday,
         failedLoginAttempts: 0,
         lockedUntil: null,
         loginHistory: [{ timestamp: new Date().toISOString(), sessionId: crypto.randomUUID?.() || Math.random().toString(36).slice(2) }, ...(candidate.loginHistory || [])].slice(0, 5),
@@ -634,7 +557,16 @@ export default function App() {
       const passwordAgeDays = updatedUser.passwordChangedAt
         ? (Date.now() - new Date(updatedUser.passwordChangedAt).getTime()) / 86400000
         : 31;
-      setPasswordModal(updatedUser.mustChangePassword || (!updatedUser.mustChangePassword && passwordAgeDays > 30) ? 'forced' : null);
+      const showPwModal = updatedUser.mustChangePassword || (!updatedUser.mustChangePassword && passwordAgeDays > 30);
+      setPasswordModal(showPwModal ? 'forced' : null);
+      // Birthday prompt: show after password modal if applicable
+      const shouldShowBirthdayPrompt = birthdayNull && (updatedUser.loginCountWithoutBirthday || 0) <= 2;
+      if (showPwModal) {
+        // birthday will be shown after password modal closes
+        setPendingBirthdayPrompt(shouldShowBirthdayPrompt);
+      } else {
+        setShowBirthdayPrompt(shouldShowBirthdayPrompt);
+      }
       // land page: dynamically choose the first accessible tab
       const targetTab = getFirstAccessibleTab(updatedUser);
       setCurrentTab(targetTab);
@@ -655,6 +587,33 @@ export default function App() {
         ? 'Account locked due to too many failed attempts. Try again in 15 minutes.'
         : 'Incorrect username or password.', 'error');
     }
+  };
+
+  // After password modal closes, show birthday prompt if pending
+  useEffect(() => {
+    if (!passwordModal && pendingBirthdayPrompt) {
+      setPendingBirthdayPrompt(false);
+      setShowBirthdayPrompt(true);
+    }
+  }, [passwordModal, pendingBirthdayPrompt]);
+
+  const handleSaveBirthday = () => {
+    if (!currentUser || !birthdayMonth || !birthdayDay) return;
+    const mm = birthdayMonth.padStart(2, '0');
+    const dd = birthdayDay.padStart(2, '0');
+    const updated = { ...currentUser, birthday: `${mm}-${dd}`, loginCountWithoutBirthday: 99 };
+    setAppState(prev => ({ ...prev, users: prev.users.map(u => u.id === updated.id ? updated : u) }));
+    setCurrentUser(updated);
+    setShowBirthdayPrompt(false);
+    setBirthdayDay('');
+    setBirthdayMonth('');
+    showToast('Birthday saved! 🎂', 'success');
+  };
+
+  const handleMaybeLaterBirthday = () => {
+    setShowBirthdayPrompt(false);
+    setBirthdayDay('');
+    setBirthdayMonth('');
   };
 
   const handleLogout = useCallback(() => {
@@ -772,8 +731,9 @@ export default function App() {
       ...scopedAppState,
       squads: appState.squads.filter(squad => squad.projectId === currentUser.projectId),
       releaseEntries: appState.releaseEntries.filter(entry => entry.projectId === currentUser.projectId),
+      sprints: appState.sprints || [],
     };
-  }, [appState.releaseEntries, appState.squads, currentUser, scopedAppState]);
+  }, [appState.releaseEntries, appState.squads, appState.sprints, currentUser, scopedAppState]);
 
   // Check tab access authorization
   const canAccessTab = (tabId: string) => {
@@ -792,6 +752,7 @@ export default function App() {
       settings: 'settings',
     };
 
+    if (tabId === 'home') return true;
     if (tabId === 'profile') return true;
     if (tabId === 'teamStructure') return currentUser.role !== 'member';
     if (tabId === 'announcements') return currentUser.role === 'superadmin' || currentUser.role === 'admin';
@@ -845,7 +806,8 @@ export default function App() {
         return;
       }
       if (pendingG) {
-        const map: Record<string, string> = { d: 'dashboard', e: 'dataEntry', f: 'defects', r: 'releases', t: 'timesheet', x: 'export', s: 'teamStructure', l: 'leaveRequests', a: 'announcements' };
+        const map: Record<string, string> = { h: 'home', d: 'dashboard', e: 'dataEntry', f: 'defects', r: 'releases', t: 'timesheet', x: 'export', s: 'teamStructure', l: 'leaveRequests', a: 'announcements' };
+        // r = Cycles (tab id remains 'releases')
         const next = map[event.key.toLowerCase()];
         if (next && canAccessTab(next)) setCurrentTab(next);
         pendingG = false;
@@ -905,7 +867,7 @@ export default function App() {
               Q
             </div>
             <h1 style={{ fontSize: '24px', fontWeight: 700, margin: '0 0 4px 0', tracking: '-0.025em' }}>
-              QA Hub v4
+              {APP_NAME}
             </h1>
             <p style={{ margin: 0, fontSize: '14px', color: theme.muted }}>
               Centralised QA Metrics & Team Operations Roster
@@ -1052,7 +1014,21 @@ export default function App() {
             <div><label style={commonStyles.label(theme)}>Role</label><div style={{ ...commonStyles.input(theme), minHeight: '32px', textTransform: 'capitalize' }}>{currentUser.role}</div></div>
             <div><label style={commonStyles.label(theme)}>Project</label><div style={{ ...commonStyles.input(theme), minHeight: '32px' }}>{projectName}</div></div>
             <div><label style={commonStyles.label(theme)}>Squad</label><div style={{ ...commonStyles.input(theme), minHeight: '32px' }}>{squadName}</div></div>
+            <div><label style={commonStyles.label(theme)}>Base Office</label><div style={{ ...commonStyles.input(theme), minHeight: '32px' }}>{currentUser.baseOffice || 'Bengaluru'}</div></div>
             <div><label style={commonStyles.label(theme)}>Reports To</label><div style={{ ...commonStyles.input(theme), minHeight: '32px' }}>{manager ? `${manager.username} (${manager.role})` : 'Unassigned'}</div></div>
+            <div><label style={commonStyles.label(theme)}>Birthday</label>
+              {currentUser.birthday ? (
+                <div style={{ ...commonStyles.input(theme), minHeight: '32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>{new Date(`2000-${currentUser.birthday}`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}</span>
+                  <button type="button" onClick={() => { setShowBirthdayPrompt(true); setBirthdayDay(''); setBirthdayMonth(''); }} style={{ ...commonStyles.button(theme, 'secondary', 'sm'), fontSize: '10px' }}>Edit</button>
+                </div>
+              ) : (
+                <div style={{ ...commonStyles.input(theme), minHeight: '32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ color: theme.muted }}>Not set</span>
+                  <button type="button" onClick={() => { setShowBirthdayPrompt(true); setBirthdayDay(''); setBirthdayMonth(''); }} style={{ ...commonStyles.button(theme, 'secondary', 'sm'), fontSize: '10px' }}>Add</button>
+                </div>
+              )}
+            </div>
           </div>
         </section>
         {currentUser.role !== 'member' && (
@@ -1110,7 +1086,7 @@ export default function App() {
           : { label: 'Weak', color: theme.red };
     return (
       <div style={{ position: 'fixed', inset: 0, zIndex: 10000, backgroundColor: theme.bg, color: theme.text, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', animation: 'modalBackdropIn 200ms ease-out' }}>
-        <div style={{ ...commonStyles.card(theme), width: '100%', maxWidth: '460px', padding: '28px', animation: 'modalPanelIn 250ms ease-out' }}>
+        <div onClick={event => event.stopPropagation()} style={{ ...commonStyles.card(theme), width: '100%', maxWidth: '460px', padding: '28px', animation: 'modalPanelIn 250ms ease-out' }}>
           <h2 style={{ margin: '0 0 8px', fontSize: '21px' }}>{isForced ? 'Change Your Password' : 'Time to update your password'}</h2>
           <p style={{ color: theme.muted, fontSize: '13px', margin: '0 0 20px' }}>
             {isForced
@@ -1152,6 +1128,58 @@ export default function App() {
               </button>
             </div>
           </form>
+        </div>
+        <Toast toast={toast} theme={theme} />
+      </div>
+    );
+  }
+
+  if (showBirthdayPrompt && currentUser) {
+    const days = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }));
+    const months = [
+      { value: '1', label: 'January' }, { value: '2', label: 'February' }, { value: '3', label: 'March' },
+      { value: '4', label: 'April' }, { value: '5', label: 'May' }, { value: '6', label: 'June' },
+      { value: '7', label: 'July' }, { value: '8', label: 'August' }, { value: '9', label: 'September' },
+      { value: '10', label: 'October' }, { value: '11', label: 'November' }, { value: '12', label: 'December' },
+    ];
+    const remaining = Math.max(0, 2 - (currentUser.loginCountWithoutBirthday || 0) + (currentUser.birthday ? 99 : 0));
+    return (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 10000, backgroundColor: 'rgba(15,23,42,0.54)', display: 'grid', placeItems: 'center', padding: '20px', animation: 'modalBackdropIn 200ms ease-out' }}>
+        <div onClick={event => event.stopPropagation()} style={{ ...commonStyles.card(theme), width: '100%', maxWidth: '460px', padding: '28px', animation: 'modalPanelIn 250ms ease-out' }}>
+          <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+            <div style={{ fontSize: '40px', marginBottom: '8px' }}>🎂</div>
+            <h2 style={{ margin: '0 0 4px', fontSize: '21px' }}>Add Your Birthday</h2>
+            <p style={{ color: theme.muted, fontSize: '13px', margin: '0', lineHeight: 1.5 }}>
+              Your birthday hasn't been added yet.<br />
+              It will be shown to your team so they can celebrate with you!
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+            <div style={{ flex: 1 }}>
+              <label style={commonStyles.label(theme)}>Day</label>
+              <select value={birthdayDay} onChange={e => setBirthdayDay(e.target.value)} style={commonStyles.select(theme, true)}>
+                <option value="">Day</option>
+                {days.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={commonStyles.label(theme)}>Month</label>
+              <select value={birthdayMonth} onChange={e => setBirthdayMonth(e.target.value)} style={commonStyles.select(theme, true)}>
+                <option value="">Month</option>
+                {months.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{ color: theme.muted, fontSize: '11px', marginBottom: '16px', textAlign: 'center' }}>
+            (Day and Month only — year is private)
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+            <button type="button" onClick={handleMaybeLaterBirthday} style={commonStyles.button(theme, 'secondary')}>Maybe Later</button>
+            <button type="button" onClick={handleSaveBirthday} disabled={!birthdayDay || !birthdayMonth} style={{ ...commonStyles.button(theme, 'primary'), opacity: (!birthdayDay || !birthdayMonth) ? 0.6 : 1 }}>Save Birthday</button>
+          </div>
+          <div style={{ textAlign: 'center', marginTop: '12px', color: theme.muted, fontSize: '11px' }}>
+            You have {remaining} reminder{remaining !== 1 ? 's' : ''} remaining
+          </div>
         </div>
         <Toast toast={toast} theme={theme} />
       </div>
@@ -1204,7 +1232,7 @@ export default function App() {
           {/* Header Title with role identifier */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 700, textTransform: 'capitalize', color: theme.text }}>
-              {activeTabValidated.replace(/([A-Z])/g, ' $1')}
+              {activeTabValidated === 'home' ? 'Home' : activeTabValidated === 'releases' ? 'Cycles' : activeTabValidated.replace(/([A-Z])/g, ' $1')}
             </h2>
             <span
               style={{
@@ -1254,6 +1282,7 @@ export default function App() {
         <main style={{ flex: 1, padding: '16px', overflowY: 'auto', boxSizing: 'border-box' }}>
           <div key={activeTabValidated} className="page-enter">
             {/* Render Active View component */}
+            {activeTabValidated === 'home' && <Home currentUser={currentUser} appState={appState} setAppState={setAppState} theme={theme} onNavigate={setCurrentTab} showToast={showToast} />}
             {activeTabValidated === 'dashboard' && <Dashboard currentUser={currentUser} appState={scopedAppState} theme={theme} onNavigate={setCurrentTab} />}
             {activeTabValidated === 'profile' && renderProfile()}
             {activeTabValidated === 'teamStructure' && <TeamStructure currentUser={currentUser} appState={appState} theme={theme} />}
@@ -1354,7 +1383,7 @@ export default function App() {
       {/* Floating active notifications */}
       {idleLocked && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 10001, backgroundColor: `${theme.bg}f2`, display: 'grid', placeItems: 'center', padding: '20px' }}>
-          <form onSubmit={handleUnlock} style={{ ...commonStyles.card(theme), width: '100%', maxWidth: '420px', padding: '26px' }}>
+          <form onClick={event => event.stopPropagation()} onSubmit={handleUnlock} style={{ ...commonStyles.card(theme), width: '100%', maxWidth: '420px', padding: '26px' }}>
             <h2 style={{ margin: '0 0 8px', fontSize: '20px' }}>Session locked</h2>
             <p style={{ margin: '0 0 18px', color: theme.muted, fontSize: '13px' }}>Session locked. Enter your password to continue.</p>
             <label style={commonStyles.label(theme)}>Password</label>
@@ -1366,9 +1395,9 @@ export default function App() {
       )}
       {shortcutsOpen && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 10002, backgroundColor: 'rgba(15,23,42,0.54)', display: 'grid', placeItems: 'center', padding: '20px' }}>
-          <div style={{ ...commonStyles.card(theme), width: '100%', maxWidth: '440px', padding: '22px' }}>
+          <div onClick={event => event.stopPropagation()} style={{ ...commonStyles.card(theme), width: '100%', maxWidth: '440px', padding: '22px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}><h3 style={{ margin: 0 }}>Keyboard Shortcuts</h3><button onClick={() => setShortcutsOpen(false)} style={{ border: 0, background: 'transparent', color: theme.muted, cursor: 'pointer' }}><X size={18} /></button></div>
-            {['G D - Dashboard', 'G E - Data Entry', 'G F - Defects', 'G R - Releases', 'G T - Timesheet', 'G X - Export', 'G S - Team Structure', 'Escape - Close modal or popover', 'Ctrl/Cmd + S - Save open form'].map(item => <div key={item} style={{ padding: '7px 0', borderTop: `1px solid ${theme.border}`, fontSize: '13px' }}>{item}</div>)}
+            {['G H - Home', 'G D - Dashboard', 'G E - Data Entry', 'G F - Defects', 'G R - Cycles', 'G T - Timesheet', 'G X - Export', 'G S - Team Structure', 'Escape - Close modal or popover', 'Ctrl/Cmd + S - Save open form'].map(item => <div key={item} style={{ padding: '7px 0', borderTop: `1px solid ${theme.border}`, fontSize: '13px' }}>{item}</div>)}
           </div>
         </div>
       )}

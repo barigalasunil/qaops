@@ -47,6 +47,8 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
     storyLink: '',
     storySummary: '',
     notes: '',
+    sprintId: '',
+    sprintName: '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [newRowId, setNewRowId] = useState<string | null>(null);
@@ -131,6 +133,7 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
 
+    const sprintObj = (appState.sprints || []).find(s => s.id === form.sprintId);
     const newDefect: IDefect = {
       id: generateId(),
       date: form.date,
@@ -150,7 +153,9 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
       notes: sanitise(form.notes.trim()),
       addedBy: currentUser.id,
       addedByName: currentUser.username,
-      customFields: Object.fromEntries(Object.entries(customFormVals).map(([key, value]) => [key, sanitise(value)]))
+      customFields: Object.fromEntries(Object.entries(customFormVals).map(([key, value]) => [key, sanitise(value)])),
+      sprintId: form.sprintId || '',
+      sprintName: sprintObj?.name || '',
     };
 
     setAppState((prev) => {
@@ -202,6 +207,8 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
       storyLink: '',
       storySummary: '',
       notes: '',
+      sprintId: '',
+      sprintName: '',
     });
     setCustomFormVals({});
 
@@ -306,10 +313,23 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
             />
             {(!appState.releaseNames || appState.releaseNames.length === 0) && (
               <p style={{ gridColumn: '1 / -1', margin: '-10px 0 0', color: theme.muted, fontSize: '12px' }}>
-                Go to Releases → Release Names to add release names first.
+                Go to Cycles → Release Names to add release names first.
               </p>
             )}
-            
+
+            <Field
+              label="Sprint"
+              type="select"
+              value={form.sprintId || ''}
+              onChange={(v) => updateForm('sprintId', v, { sprintName: v ? (appState.sprints || []).find(s => s.id === v)?.name || '' : '' })}
+              options={(appState.sprints || []).sort((a, b) => b.startDate.localeCompare(a.startDate)).map(s => {
+                const label = `${s.name} (${new Date(s.startDate+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'})} – ${new Date(s.endDate+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})})`;
+                return { value: s.id, label };
+              })}
+              placeholder="— No Sprint —"
+              theme={theme}
+            />
+
             <Field
               label="Project"
               type="select"
@@ -431,6 +451,7 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
               <tr>
                 <th style={{ ...commonStyles.th(theme), minWidth: '98px' }}>Date</th>
                 <th style={commonStyles.th(theme)}>Release</th>
+                <th style={commonStyles.th(theme)}>Sprint</th>
                 <th style={commonStyles.th(theme)}>Project</th>
                 <th style={commonStyles.th(theme)}>Squad</th>
                 <th style={commonStyles.th(theme)}>Added By</th>
@@ -446,7 +467,7 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
             <tbody>
               {visibleDefects.length === 0 ? (
                 <tr>
-                  <td colSpan={readOnly ? 11 : 12} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '28px' }}>
+                  <td colSpan={readOnly ? 12 : 13} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '28px' }}>
                     <div style={{ fontSize: '18px', marginBottom: '4px' }}>∅</div>
                     No defects logged yet.
                   </td>
@@ -469,6 +490,7 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
                     <tr key={row.id} className={row.id === newRowId ? 'row-flash' : undefined} style={{ backgroundColor: index % 2 === 1 ? `${theme.inputBg}cc` : 'transparent', borderLeft: `4px solid ${priorityColor}` }}>
                       <td style={{ ...commonStyles.td(theme), whiteSpace: 'nowrap' }}>{formatDate(row.date)}</td>
                       <td style={commonStyles.td(theme)}>{row.release || '—'}</td>
+                      <td style={commonStyles.td(theme)}>{row.sprintName || '—'}</td>
                       <td style={commonStyles.td(theme)}>{projectMap.get(row.projectId) || 'Unknown'}</td>
                       <td style={commonStyles.td(theme)}>{squadMap.get(row.squadId) || 'Unknown'}</td>
                       <td style={commonStyles.td(theme)}>{row.addedByName}</td>
@@ -608,7 +630,7 @@ export function Defects({ currentUser, appState, setAppState, showToast, theme, 
       </div>
       {confirmDeleteDefectId && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '32px 28px', width: '100%', maxWidth: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.4)' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '32px 28px', width: '100%', maxWidth: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.4)' }}>
             <h3 style={{ margin: '0 0 12px', fontSize: '18px' }}>Delete Defect?</h3>
             <p style={{ fontSize: '14px', color: theme.text, margin: '0 0 24px' }}>Are you sure you want to delete this defect?</p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>

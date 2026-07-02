@@ -1,44 +1,58 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Calendar, Clock } from 'lucide-react';
 import { ThemeTokens, commonStyles } from '../theme';
-import { AppState, Holiday, TimesheetEntry, User, WorkingDay } from '../types';
-import { getDaysForMonth, generateId, sanitise, formatDateTime, formatTime } from '../utils';
-import { Field, StatCard, ViewOnlyBanner } from './Shared';
-import { CheckCircle, Clock, Calendar, X, CalendarCheck } from 'lucide-react';
+import { AppState, TimesheetEntry, User, WorkingDay } from '../types';
+import { generateId } from '../utils';
+import { StatCard, ViewOnlyBanner } from './Shared';
 import { HolidayList } from './HolidayList';
 
 const USER_COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444', '#06b6d4', '#f97316', '#84cc16'];
-const LOCATION_OPTIONS = ['QX-BLR', 'VIL-Pune', 'VIL-MUM', 'VIL-BLR'];
-const STATUS_OPTIONS: WorkingDay['status'][] = ['Weekend', 'Working', 'WFH', 'Leave', 'Holiday', 'Training'];
+const LOCATION_OPTIONS = ['QX-BLR', 'VIL-BLR', 'VIL-Pune', 'VIL-MUM'];
+const LOCATION_COLORS: Record<string, string> = {
+  'QX-BLR': '#3b82f6',
+  'VIL-BLR': '#6366f1',
+  'VIL-Pune': '#f59e0b',
+  'VIL-MUM': '#f97316',
+};
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const STATUS_COLORS: Record<WorkingDay['status'], { light: string; dark: string }> = {
-  Working: { light: '#d1fae5', dark: '#064e3b' },
-  WFH: { light: '#dbeafe', dark: '#1e3a5f' },
-  Leave: { light: '#fee2e2', dark: '#4c1d1d' },
-  Holiday: { light: '#ede9fe', dark: '#3b1f6e' },
-  Training: { light: '#fef3c7', dark: '#451a03' },
-  Weekend: { light: '#f1f5f9', dark: '#1a1f2e' },
-};
+const STATUSES = ['Working', 'WFH', 'Leave', 'Holiday', 'Training', 'Weekend'] as const;
 
-const summarizeDays = (days: WorkingDay[], holidayMap: Map<string, Holiday>) => {
-  let working = 0, leave = 0, wfh = 0, holiday = 0, training = 0, night = 0, weekend = 0;
-  days.forEach((day) => {
-    const effectiveStatus = day.isStatusSet ? day.status : holidayMap.has(day.date) ? 'Holiday' : day.isWeekendDay ? 'Weekend' : null;
-    if (!effectiveStatus || effectiveStatus === 'Weekend') return;
-    if (day.isNightDeployment) night++;
-    if (day.isWeekendDay && day.isWeekendSupport) weekend++;
-    if (effectiveStatus === 'Working') working++;
-    else if (effectiveStatus === 'Leave') leave++;
-    else if (effectiveStatus === 'WFH') wfh++;
-    else if (effectiveStatus === 'Holiday') holiday++;
-    else if (effectiveStatus === 'Training') training++;
+function generateMonthDays(year: number, month: number): WorkingDay[] {
+  const count = new Date(year, month, 0).getDate();
+  return Array.from({ length: count }, (_, i) => {
+    const d = new Date(year, month - 1, i + 1);
+    const dow = d.getDay();
+    return {
+      date: d.toISOString().slice(0, 10),
+      dayName: d.toLocaleDateString('en-GB', { weekday: 'short' }),
+      isWeekendDay: dow === 0 || dow === 6,
+      status: null,
+      isStatusSet: false,
+      isNightDeployment: false,
+      isWeekendSupport: false,
+      workLocation: null,
+      locationAudit: null,
+      notes: '',
+      lastModifiedBy: null,
+      lastModifiedByRole: null,
+      lastModifiedAt: null,
+      isAdminAdjustment: false,
+    };
   });
-  return { working, leave, wfh, holiday, training, night, weekend };
-};
+}
+
+function getCellBg(status: WorkingDay['status'], isWeekendDay: boolean, isDark: boolean) {
+  if (!status) return 'transparent';
+  if (status === 'Weekend') return isDark ? '#111827' : '#f1f5f9';
+  return ({
+    Working: isDark ? '#064e3b' : '#d1fae5',
+    WFH: isDark ? '#1e3a5f' : '#dbeafe',
+    Leave: isDark ? '#7f1d1d' : '#fee2e2',
+    Holiday: isDark ? '#3b1f6e' : '#ede9fe',
+    Training: isDark ? '#451a03' : '#fef3c7',
+  } as Record<string, string>)[status] || 'transparent';
+}
 
 interface TimesheetProps {
   currentUser: User;
@@ -50,688 +64,744 @@ interface TimesheetProps {
 }
 
 export function Timesheet({ currentUser, appState, setAppState, showToast, theme, readOnly = false }: TimesheetProps) {
-  const isAdminOrLead = currentUser.role === 'superadmin' || currentUser.role === 'admin' || currentUser.role === 'lead';
-  const canLogForOthers = currentUser.role === 'superadmin' || currentUser.role === 'admin';
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
+  const isDark = theme.bg === '#0f172a';
+  const canLogForOthers = currentUser.role === 'superadmin' || currentUser.role === 'admin' || currentUser.role === 'lead';
+  const canViewLocationAudit = currentUser.role === 'superadmin' || currentUser.role === 'admin' || currentUser.role === 'lead';
+  const canEditOtherWorkLocation = canViewLocationAudit;
+  const canViewTeam = currentUser.role === 'superadmin' || currentUser.role === 'admin' || currentUser.role === 'lead';
 
-  const [activeSubTab, setActiveSubTab] = useState<'calendar' | 'monthly' | 'special' | 'locations' | 'holidays'>('calendar');
-  const [quickEditDate, setQuickEditDate] = useState<string | null>(null);
+  const [selMonth, setSelMonth] = useState(today.getMonth() + 1);
+  const [selYear, setSelYear] = useState(today.getFullYear());
+  const [activeTab, setActiveTab] = useState<'calendar' | 'special' | 'holidays'>('calendar');
+  const [targetId, setTargetId] = useState(currentUser.id);
+  const [targetName, setTargetName] = useState(currentUser.username);
+  const [monthData, setMonthData] = useState<WorkingDay[]>([]);
+  const [popOpen, setPopOpen] = useState(false);
+  const [popDay, setPopDay] = useState<WorkingDay | null>(null);
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
 
-  const today = useMemo(() => new Date(), []);
-  const [selectedMonthNumber, setSelectedMonthNumber] = useState(today.getMonth() + 1);
-  const [selectedYear, setSelectedYear] = useState(today.getFullYear());
-  const selectedMonth = `${selectedYear}-${String(selectedMonthNumber).padStart(2, '0')}`;
-  const yearOptions = useMemo(
-    () => Array.from({ length: 5 }, (_, index) => today.getFullYear() - 2 + index),
-    [today]
-  );
+  const storeRef = useRef(appState);
+  const popDayRef = useRef<WorkingDay | null>(null);
 
-  // User selection (for Admin/Lead viewing options, defaults to current user)
-  const [selectedUserId, setSelectedUserId] = useState(currentUser.id);
+  useEffect(() => { storeRef.current = appState; }, [appState]);
+  useEffect(() => { popDayRef.current = popDay; }, [popDay]);
 
-  // Temporary calendar grid state for active month log being edited
-  const [editingDays, setEditingDays] = useState<WorkingDay[]>([]);
-  const [locationRange, setLocationRange] = useState({ from: '', to: '' });
-  const [locationView, setLocationView] = useState<'pending' | 'completed'>('pending');
-  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
-
-  // Find existing timesheet entry
-  const existingEntry = useMemo(() => {
-    return appState.timesheetEntries.find(
-      (t) => t.userId === selectedUserId && t.month === selectedMonth
+  useEffect(() => {
+    const key = `${selYear}-${String(selMonth).padStart(2, '0')}`;
+    const found = storeRef.current.timesheetEntries.find(
+      e => e.userId === targetId && e.month === key
     );
-  }, [appState.timesheetEntries, selectedUserId, selectedMonth]);
+    setMonthData(
+      found?.workingDays?.length
+        ? found.workingDays.map(d => ({ ...d }))
+        : generateMonthDays(selYear, selMonth)
+    );
+    setPopOpen(false);
+    setPopDay(null);
+    setLastSaved(null);
+  }, [selMonth, selYear, targetId]);
 
-  const holidayMap = useMemo(() => {
-    const map = new Map<string, Holiday>();
-    (appState.holidays || [])
-      .filter(holiday => holiday.date.slice(0, 7) === selectedMonth)
-      .forEach(holiday => map.set(holiday.date, holiday));
-    return map;
-  }, [appState.holidays, selectedMonth]);
-
-  // Load existing entry or generate new grid
   useEffect(() => {
-    if (existingEntry) {
-      setEditingDays(existingEntry.workingDays.map((day) => ({
-        ...day,
-        dayName: day.dayName || new Date(`${day.date}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'short' }),
-        isWeekendDay: day.isWeekendDay ?? [0, 6].includes(new Date(`${day.date}T00:00:00`).getDay()),
-        isStatusSet: day.isStatusSet ?? true,
-        isNightDeployment: day.isNightDeployment ?? day.isNightShift ?? false,
-        isWeekendSupport: day.isWeekendSupport ?? false,
-        workLocation: day.workLocation ?? null,
-        lastModifiedBy: day.lastModifiedBy ?? null,
-        lastModifiedByRole: day.lastModifiedByRole ?? null,
-        lastModifiedAt: day.lastModifiedAt ?? null,
-        isAdminAdjustment: day.isAdminAdjustment ?? false,
-      })));
-    } else {
-      setEditingDays(getDaysForMonth(selectedYear, selectedMonthNumber));
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setPopOpen(false);
+        setPopDay(null);
+        popDayRef.current = null;
+      }
     }
-  }, [existingEntry, selectedMonth, selectedMonthNumber, selectedUserId, selectedYear]);
-
-  // Selected username lookup
-  const selectedUser = useMemo(() => {
-    return appState.users.find(u => u.id === selectedUserId) || currentUser;
-  }, [appState.users, selectedUserId, currentUser]);
-
-  // Working day parameters summary for the selected sheet
-  const summary = useMemo(() => {
-    const counts = summarizeDays(editingDays, holidayMap);
-    return { ...counts, nightShifts: counts.night, weekendWork: counts.weekend };
-  }, [editingDays, holidayMap]);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setQuickEditDate(null);
-    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const persistMonth = (days: WorkingDay[], successMessage?: string) => {
-    const modifiedAt = new Date().toISOString();
-    const isEditingAnotherUser = canLogForOthers && selectedUserId !== currentUser.id;
-    setAppState((prev) => {
-      const previousEntry = prev.timesheetEntries.find(
-        (t) => t.userId === selectedUserId && t.month === selectedMonth
-      );
-      const filtered = prev.timesheetEntries.filter(
-        (t) => !(t.userId === selectedUserId && t.month === selectedMonth)
+  function persist(next: AppState) {
+    storeRef.current = next;
+    setAppState(next);
+  }
+
+  function saveDay(updatedDay: WorkingDay) {
+    const key = `${selYear}-${String(selMonth).padStart(2, '0')}`;
+
+    setMonthData(prev => {
+      const next = prev.map(d =>
+        d.date === updatedDay.date ? { ...updatedDay } : d
       );
 
-      const newEntry: TimesheetEntry = {
-        id: previousEntry?.id || existingEntry?.id || generateId(),
-        userId: selectedUserId,
-        userName: selectedUser.username,
-        month: selectedMonth,
-        workingDays: days.map(day => {
-          const previousDay = previousEntry?.workingDays.find(item => item.date === day.date);
-          const changed = !previousDay || (
-            previousDay.status !== day.status ||
-            previousDay.isStatusSet !== day.isStatusSet ||
-            previousDay.isNightDeployment !== day.isNightDeployment ||
-            previousDay.isWeekendSupport !== day.isWeekendSupport ||
-            (previousDay.workLocation || '') !== (day.workLocation || '') ||
-            (previousDay.notes || '') !== (day.notes || '')
-          );
-          return {
-            ...day,
-            notes: sanitise(day.notes),
-            lastModifiedBy: isEditingAnotherUser && changed ? currentUser.username : (day.lastModifiedBy ?? null),
-            lastModifiedByRole: isEditingAnotherUser && changed ? currentUser.role : (day.lastModifiedByRole ?? null),
-            lastModifiedAt: isEditingAnotherUser && changed ? modifiedAt : (day.lastModifiedAt ?? null),
-            isAdminAdjustment: isEditingAnotherUser && changed ? true : (day.isAdminAdjustment ?? false),
-          };
-        }),
-      };
+      const cur = storeRef.current;
+      const idx = cur.timesheetEntries.findIndex(
+        e => e.userId === targetId && e.month === key
+      );
 
-      return {
-        ...prev,
-        timesheetEntries: [...filtered, newEntry],
-        users: prev.users.map(user => user.id === selectedUser.id && isEditingAnotherUser ? {
+      const entries: TimesheetEntry[] = idx >= 0
+        ? cur.timesheetEntries.map((e, i) =>
+            i === idx ? { ...e, workingDays: next } : e)
+        : [...cur.timesheetEntries, {
+            id: generateId(),
+            userId: targetId,
+            userName: targetName,
+            month: key,
+            workingDays: next,
+          }];
+
+      const editingOther = targetId !== currentUser.id;
+      const modifiedAt = updatedDay.lastModifiedAt || new Date().toISOString();
+      const updatedStore: AppState = {
+        ...cur,
+        timesheetEntries: entries,
+        users: editingOther ? cur.users.map(user => user.id === targetId ? {
           ...user,
           notifications: [{
             id: generateId(),
-            message: `${currentUser.username} adjusted your timesheet for ${selectedMonth}.`,
+            message: `${currentUser.username} adjusted your timesheet for ${key}.`,
             read: false,
             createdAt: modifiedAt,
-            type: 'info' as const,
+            type: 'info',
             link: 'timesheet',
           }, ...(user.notifications || [])].slice(0, 50),
-        } : user),
+        } : user) : cur.users,
         auditLog: [{
           id: generateId(),
           timestamp: modifiedAt,
           userId: currentUser.id,
           username: currentUser.username,
           role: currentUser.role,
-          action: isEditingAnotherUser ? 'TIMESHEET_ADMIN_ADJUST' : 'TIMESHEET_SAVE',
-          details: `${isEditingAnotherUser ? 'Adjusted' : 'Saved'} ${selectedUser.username}'s timesheet for ${selectedMonth}`,
+          action: editingOther ? 'TIMESHEET_ADMIN_ADJUST' : 'TIMESHEET_SAVE',
+          details: `${editingOther ? 'Adjusted' : 'Saved'} ${targetName}'s timesheet for ${key}`,
           ipHint: 'Browser session',
-        }, ...(prev.auditLog || [])].slice(0, 500),
+        }, ...(cur.auditLog || [])].slice(0, 500),
       };
+
+      persist(updatedStore);
+      return next;
     });
-    setLastSavedAt(modifiedAt);
-    if (successMessage) showToast(successMessage, 'success');
-    if (days.some(day => (day.status === 'Working' || day.status === 'WFH') && day.isStatusSet && !day.workLocation)) {
-      showToast('⚠ Some working days have no location set. Update them in the Workplace Location tab.', 'warning', 5000);
+
+    setLastSaved(new Date());
+  }
+
+  function openPop(dateStr: string) {
+    const d = monthData.find(x => x.date === dateStr);
+    if (!d) return;
+    const copy: WorkingDay = {
+      date: d.date,
+      dayName: d.dayName,
+      isWeekendDay: d.isWeekendDay,
+      status: d.status,
+      isStatusSet: d.isStatusSet,
+      isNightDeployment: d.isNightDeployment,
+      isWeekendSupport: d.isWeekendSupport,
+      workLocation: d.workLocation,
+      locationAudit: d.locationAudit ?? null,
+      notes: d.notes || '',
+      lastModifiedBy: d.lastModifiedBy,
+      lastModifiedByRole: d.lastModifiedByRole,
+      lastModifiedAt: d.lastModifiedAt,
+      isAdminAdjustment: d.isAdminAdjustment,
+    };
+    setPopDay(copy);
+    popDayRef.current = copy;
+    setPopOpen(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function setField(field: keyof WorkingDay, value: any) {
+    setPopDay(prev => {
+      if (!prev) return prev;
+      const next = { ...prev, [field]: value, isStatusSet: field === 'status' ? true : prev.isStatusSet };
+      if (field === 'status' && value !== 'Working') next.workLocation = null;
+      popDayRef.current = next;
+      return next;
+    });
+  }
+
+  function savePop() {
+    const d = popDayRef.current;
+    if (!d) return;
+    const originalDay = monthData.find(day => day.date === d.date);
+    const locationChangedByPrivilegedUser = targetId !== currentUser.id
+      && canEditOtherWorkLocation
+      && (originalDay?.workLocation || null) !== (d.workLocation || null);
+    const editedAt = new Date().toISOString();
+    const final: WorkingDay = {
+      ...d,
+      locationAudit: locationChangedByPrivilegedUser ? {
+        editedBy: currentUser.username,
+        editedByRole: currentUser.role,
+        editedOn: editedAt,
+        previousLocation: originalDay?.workLocation || null,
+        newLocation: d.workLocation || null,
+      } : d.locationAudit ?? null,
+      isStatusSet: !!d.status,
+      lastModifiedBy: currentUser.username,
+      lastModifiedByRole: currentUser.role,
+      lastModifiedAt: editedAt,
+      isAdminAdjustment: targetId !== currentUser.id,
+    };
+    saveDay(final);
+    if (final.status === 'Working' && !final.workLocation) {
+      showToast('⚠ Saved — please set office location.', 'warning');
     }
-  };
+    setPopOpen(false);
+    setPopDay(null);
+    popDayRef.current = null;
+  }
 
-  const handleDayChange = (index: number, key: keyof WorkingDay, val: any) => {
-    setEditingDays((prev) => {
-      const copy = [...prev];
-      const current = copy[index];
-      if (key === 'status' && val === '') {
-        copy[index] = {
-          ...current,
-          status: current.isWeekendDay ? 'Weekend' : 'Working',
-          isStatusSet: false,
-        };
-        persistMonth(copy);
-        return copy;
-      }
-      const shouldMarkStatusSet = key === 'status' || key === 'workLocation' || key === 'notes' || key === 'isNightDeployment' || key === 'isWeekendSupport';
-      copy[index] = {
-        ...current,
-        [key]: val,
-        isStatusSet: shouldMarkStatusSet ? true : current.isStatusSet,
-      };
-      persistMonth(copy);
-      return copy;
+  function handleLoggingForChange(userId: string) {
+    if (userId === 'self') {
+      setTargetId(currentUser.id);
+      setTargetName(currentUser.username);
+      return;
+    }
+    const user = storeRef.current.users.find(u => u.id === userId);
+    if (user) {
+      setTargetId(user.id);
+      setTargetName(user.username);
+    }
+  }
+
+  function buildGrid() {
+    const firstDow = new Date(selYear, selMonth - 1, 1).getDay();
+    const cells: (WorkingDay | null)[] = [...Array(firstDow).fill(null), ...monthData];
+    while (cells.length % 7) cells.push(null);
+    return cells;
+  }
+
+  const summary = monthData.reduce((acc, day) => {
+    if (day.isNightDeployment) acc.night++;
+    if (day.isWeekendDay && day.isWeekendSupport) acc.weekend++;
+    if (day.status === 'Working') acc.working++;
+    else if (day.status === 'WFH') acc.wfh++;
+    else if (day.status === 'Leave') acc.leave++;
+    else if (day.status === 'Holiday') acc.holiday++;
+    else if (day.status === 'Training') acc.training++;
+    return acc;
+  }, { working: 0, wfh: 0, leave: 0, holiday: 0, training: 0, night: 0, weekend: 0 });
+
+  const teamSummaries = appState.timesheetEntries.map(entry => {
+    const row = entry.workingDays.reduce((acc, day) => {
+      if (day.isNightDeployment) acc.night++;
+      if (day.isWeekendDay && day.isWeekendSupport) acc.weekend++;
+      if (day.status === 'Working') acc.working++;
+      else if (day.status === 'WFH') acc.wfh++;
+      else if (day.status === 'Leave') acc.leave++;
+      else if (day.status === 'Holiday') acc.holiday++;
+      else if (day.status === 'Training') acc.training++;
+      return acc;
+    }, { working: 0, wfh: 0, leave: 0, holiday: 0, training: 0, night: 0, weekend: 0 });
+    return { ...row, id: entry.id, userId: entry.userId, userName: entry.userName, month: entry.month };
+  }).sort((a, b) => b.month.localeCompare(a.month));
+
+  const specialLogs = (() => {
+    const nightShifts: { userName: string; date: string; day: string; status: string; notes: string }[] = [];
+    const weekendWork: { userName: string; date: string; day: string; status: string; notes: string }[] = [];
+    appState.timesheetEntries.forEach(entry => {
+      if (!canViewTeam && entry.userId !== currentUser.id) return;
+      entry.workingDays.forEach(day => {
+        const dayName = new Date(day.date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long' });
+        const status = day.status || '';
+        if (day.isNightDeployment) nightShifts.push({ userName: entry.userName, date: day.date, day: dayName, status, notes: day.notes || '' });
+        if (day.isWeekendDay && day.isWeekendSupport && (day.status === 'Working' || day.status === 'WFH')) {
+          weekendWork.push({ userName: entry.userName, date: day.date, day: dayName, status, notes: day.notes || '' });
+        }
+      });
     });
-  };
+    nightShifts.sort((a, b) => b.date.localeCompare(a.date));
+    weekendWork.sort((a, b) => b.date.localeCompare(a.date));
+    return { nightShifts, weekendWork };
+  })();
 
-  const monthHeading = `${selectedUser.username}'s Roster for ${new Date(selectedYear, selectedMonthNumber - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}`;
-  const getEffectiveStatus = (day: WorkingDay): WorkingDay['status'] | null => (
-    day.isStatusSet ? day.status : holidayMap.has(day.date) ? 'Holiday' : day.isWeekendDay ? 'Weekend' : null
-  );
-  const hasPendingLocations = editingDays.some(day => day.isStatusSet && (day.status === 'Working' || day.status === 'WFH') && !day.workLocation);
-  const lastSavedLabel = lastSavedAt ? `Last saved ${formatTime(lastSavedAt)}` : 'Not saved this session';
-
-  const renderMonthControls = () => (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-end', marginBottom: '20px' }}>
-      <div style={{ flex: 1, minWidth: '160px' }}>
-        <label style={commonStyles.label(theme)}>Month</label>
-        <select value={selectedMonthNumber} onChange={(event) => setSelectedMonthNumber(Number(event.target.value))} style={commonStyles.input(theme)}>
-          {MONTH_NAMES.map((month, index) => <option key={month} value={index + 1}>{month}</option>)}
-        </select>
-      </div>
-      <div style={{ flex: 1, minWidth: '120px' }}>
-        <label style={commonStyles.label(theme)}>Year</label>
-        <select value={selectedYear} onChange={(event) => setSelectedYear(Number(event.target.value))} style={commonStyles.input(theme)}>
-          {yearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
-        </select>
-      </div>
-      {canLogForOthers && (
-        <div style={{ flex: 1, minWidth: '160px' }}>
-          <label style={commonStyles.label(theme)}>Logging for</label>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '5px', fontSize: '11px', color: theme.muted }}>
-            <span style={{ width: '9px', height: '9px', borderRadius: '50%', backgroundColor: USER_COLORS[Math.max(0, appState.users.findIndex(u => u.id === selectedUserId)) % USER_COLORS.length] }} />
-            {selectedUser.username}
-          </div>
-          <select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} style={commonStyles.input(theme)}>
-            {appState.users.map((u) => <option key={u.id} value={u.id}>{u.id === currentUser.id ? `Myself - ${u.username}` : `${u.username} (${u.role})`}</option>)}
+  function Controls() {
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end', marginBottom: 20 }}>
+        <div style={{ flex: 1, minWidth: 160 }}>
+          <label style={commonStyles.label(theme)}>Month</label>
+          <select value={selMonth} onChange={e => setSelMonth(Number(e.target.value))} style={commonStyles.input(theme)}>
+            {MONTH_NAMES.map((month, index) => <option key={month} value={index + 1}>{month}</option>)}
           </select>
         </div>
-      )}
-      <div style={{ marginLeft: 'auto', color: lastSavedAt ? theme.green : theme.muted, fontSize: '12px', fontWeight: 700 }}>
-        {lastSavedLabel}
-      </div>
-    </div>
-  );
-
-  const renderAdjustmentNotice = () => canLogForOthers && selectedUserId !== currentUser.id ? (
-    <div style={{ marginBottom: '18px', padding: '12px 14px', borderRadius: '8px', backgroundColor: '#f59e0b', color: '#1f2937', fontWeight: 700, fontSize: '13px' }}>
-      ⚠ You are editing {selectedUser.username}'s timesheet as {currentUser.username} ({currentUser.role === 'superadmin' ? 'Super Admin' : 'Admin'})
-    </div>
-  ) : null;
-
-  const calendarCells = useMemo(() => {
-    const firstDate = new Date(selectedYear, selectedMonthNumber - 1, 1);
-    const leading = firstDate.getDay();
-    const cells: (WorkingDay | null)[] = [...Array(leading).fill(null), ...editingDays];
-    while (cells.length % 7 !== 0) cells.push(null);
-    return cells;
-  }, [editingDays, selectedMonthNumber, selectedYear]);
-
-  const renderQuickEdit = () => {
-    if (!quickEditDate) return null;
-    const idx = editingDays.findIndex(day => day.date === quickEditDate);
-    const day = editingDays[idx];
-    if (!day) return null;
-    const holiday = holidayMap.get(day.date);
-    const readOnlyHoliday = !!holiday && holiday.type === 'Holiday' && !day.isStatusSet;
-    const effectiveStatus = getEffectiveStatus(day) || day.status;
-    const dateObj = new Date(`${day.date}T00:00:00`);
-    return (
-      <div onClick={() => setQuickEditDate(null)} style={{ position: 'fixed', inset: 0, zIndex: 1000, backgroundColor: 'rgba(15, 23, 42, 0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-        <div onClick={(event) => event.stopPropagation()} style={{ ...commonStyles.card(theme), width: '100%', maxWidth: '360px', padding: '18px', boxShadow: '0 24px 60px rgba(0,0,0,0.25)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '14px' }}>
-            <strong>{dateObj.toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' })}</strong>
-            <button type="button" onClick={() => setQuickEditDate(null)} style={{ border: 0, background: 'transparent', color: theme.muted, cursor: 'pointer' }}><X size={16} /></button>
+        <div style={{ flex: 1, minWidth: 120 }}>
+          <label style={commonStyles.label(theme)}>Year</label>
+          <select value={selYear} onChange={e => setSelYear(Number(e.target.value))} style={commonStyles.input(theme)}>
+            {[today.getFullYear() - 2, today.getFullYear() - 1, today.getFullYear(), today.getFullYear() + 1, today.getFullYear() + 2].map(year => (
+              <option key={year} value={year}>{year}</option>
+            ))}
+          </select>
+        </div>
+        {canLogForOthers && (
+          <div style={{ flex: 1, minWidth: 180 }}>
+            <label style={commonStyles.label(theme)}>Logging for</label>
+            <select value={targetId === currentUser.id ? 'self' : targetId} onChange={e => handleLoggingForChange(e.target.value)} style={commonStyles.input(theme)}>
+              <option value="self">Myself - {currentUser.username}</option>
+              {appState.users.filter(user => user.id !== currentUser.id).map(user => (
+                <option key={user.id} value={user.id}>{user.username} ({user.role})</option>
+              ))}
+            </select>
           </div>
-          {readOnlyHoliday && (
-            <div style={{ padding: '10px 12px', borderRadius: '8px', backgroundColor: `${theme.indigo}18`, color: theme.text, fontSize: '13px', marginBottom: '12px' }}>
-              This is a public holiday: <strong>{holiday.name}</strong>
-            </div>
-          )}
-          <div style={{ display: 'grid', gap: '12px' }}>
-            <Field label="Status" type="select" value={effectiveStatus} onChange={(value) => handleDayChange(idx, 'status', value)} options={STATUS_OPTIONS.map(status => ({ value: status, label: status }))} theme={theme} disabled={readOnly || readOnlyHoliday} />
-            <Field label="Night Deployment" type="checkbox" value={day.isNightDeployment} onChange={(value) => handleDayChange(idx, 'isNightDeployment', value)} theme={theme} disabled={readOnly || readOnlyHoliday} />
-            <Field label="Weekend Support" type="checkbox" value={day.isWeekendSupport} onChange={(value) => handleDayChange(idx, 'isWeekendSupport', value)} theme={theme} disabled={readOnly || readOnlyHoliday} />
-            <Field label="Work Location" type="select" value={day.workLocation || ''} onChange={(value) => handleDayChange(idx, 'workLocation', value || null)} options={LOCATION_OPTIONS.map(location => ({ value: location, label: location }))} placeholder="Not set" theme={theme} disabled={readOnly || readOnlyHoliday} />
-            <Field label="Notes" type="text" value={day.notes || ''} onChange={(value) => handleDayChange(idx, 'notes', value)} theme={theme} disabled={readOnly || readOnlyHoliday} />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-              <button type="button" onClick={() => setQuickEditDate(null)} style={commonStyles.button(theme, 'secondary')}>Close</button>
-              {!readOnly && !readOnlyHoliday && <button type="button" onClick={() => { setQuickEditDate(null); showToast('Day saved.', 'success'); }} style={commonStyles.button(theme, 'primary')}>Save</button>}
-            </div>
-          </div>
+        )}
+        <div style={{ marginLeft: 'auto', color: lastSaved ? theme.green : theme.muted, fontSize: 11, fontWeight: 600 }}>
+          {lastSaved ? `Last saved ${lastSaved.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}` : 'Not saved yet'}
         </div>
       </div>
     );
-  };
+  }
 
-  const renderCalendarView = () => (
-    <div style={commonStyles.card(theme)}>
-      {renderMonthControls()}
-      {renderAdjustmentNotice()}
-      <h4 style={{ fontSize: '16px', fontWeight: 700, margin: '0 0 12px', color: theme.text }}>{monthHeading}</h4>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 14px', alignItems: 'center', marginBottom: '12px', fontSize: '11px', color: theme.muted }}>
-        {(['Working', 'WFH', 'Leave', 'Holiday', 'Training', 'Weekend'] as WorkingDay['status'][]).map(status => (
-          <span key={status} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-            <span style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: theme.bg === '#0f172a' ? STATUS_COLORS[status].dark : STATUS_COLORS[status].light, border: `1px solid ${theme.border}` }} />
-            {status}
-          </span>
-        ))}
-        <span>🌙 Night Deployment</span>
-        <span style={{ fontWeight: 800 }}>W+ Weekend Support</span>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(96px, 1fr))', gap: '8px', overflowX: 'auto' }}>
-        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-          <div key={day} style={{ fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', color: theme.muted, padding: '0 4px' }}>{day}</div>
-        ))}
-        {calendarCells.map((day, index) => {
-          if (!day) return <div key={`empty-${index}`} style={{ minHeight: '96px', borderRadius: '8px', backgroundColor: `${theme.muted}12`, border: `1px dashed ${theme.border}`, opacity: 0.55 }} />;
-          const holiday = holidayMap.get(day.date);
-          const effectiveStatus = getEffectiveStatus(day);
-          const holidayAuto = !!holiday && !day.isStatusSet;
-          const bg = effectiveStatus && (day.isStatusSet || holidayAuto)
-            ? (theme.bg === '#0f172a' ? STATUS_COLORS[effectiveStatus].dark : STATUS_COLORS[effectiveStatus].light)
-            : theme.card;
-          return (
-            <button key={day.date} type="button" onClick={() => setQuickEditDate(day.date)} style={{ minHeight: '96px', borderRadius: '8px', border: `1px solid ${theme.border}`, backgroundColor: bg, color: theme.text, cursor: 'pointer', padding: '8px', position: 'relative', textAlign: 'left' }}>
-              <span style={{ position: 'absolute', top: '7px', left: '8px', fontSize: '11px', fontWeight: 800, color: theme.muted }}>{Number(day.date.slice(8))}</span>
-              {holiday && (
-                <span title={holiday.name} style={{ position: 'absolute', top: '6px', right: day.isNightDeployment ? '28px' : '8px', fontSize: '9px', fontWeight: 900, padding: '1px 5px', borderRadius: '999px', backgroundColor: holiday.type === 'Holiday' ? `${theme.red}22` : `${theme.amber}22`, color: holiday.type === 'Holiday' ? theme.red : theme.amber }}>
-                  {holiday.type === 'Holiday' ? 'PH' : 'OH'}
-                </span>
-              )}
-              {day.isNightDeployment && <span title="Night Deployment" style={{ position: 'absolute', top: '6px', right: '8px', fontSize: '13px' }}>🌙</span>}
-              {day.isWeekendSupport && <span style={{ position: 'absolute', right: '8px', bottom: '7px', fontSize: '10px', fontWeight: 800, padding: '1px 5px', borderRadius: '999px', backgroundColor: `${theme.blue}22`, color: theme.blue }}>W+</span>}
-              {day.isAdminAdjustment && <span title={day.lastModifiedAt ? `Adjusted by ${day.lastModifiedBy || 'Unknown'} on ${formatDateTime(day.lastModifiedAt)}` : 'Admin adjusted'} style={{ position: 'absolute', bottom: '6px', left: '8px', color: theme.amber, fontWeight: 900 }}>*</span>}
-              {effectiveStatus && (day.isStatusSet || holidayAuto) && <div style={{ marginTop: '28px', fontSize: '12px', fontWeight: 700 }}>{effectiveStatus}</div>}
-              {holidayAuto && <div title={holiday.name} style={{ marginTop: '5px', fontSize: '11px', color: theme.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{holiday.name}</div>}
-              {day.isWeekendDay && <div style={{ marginTop: '4px', display: 'inline-flex', padding: '1px 5px', borderRadius: '4px', backgroundColor: '#94a3b820', color: '#94a3b8', fontSize: '9px', fontWeight: 800 }}>WKD</div>}
-              {day.isStatusSet && day.status === 'Working' && <div style={{ marginTop: '5px', fontSize: '11px', color: theme.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{day.workLocation || 'Location not set'}</div>}
+  function CalendarGrid() {
+    return (
+      <>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 4, marginBottom: 4 }}>
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+            <div key={day} style={{
+              textAlign: 'center',
+              fontSize: 10,
+              fontWeight: 700,
+              color: day === 'Sun' || day === 'Sat' ? theme.red : theme.muted,
+              textTransform: 'uppercase',
+              padding: '4px 0',
+            }}>{day}</div>
+          ))}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 4 }}>
+          {buildGrid().map((day, idx) => {
+            if (!day) return <div key={`b${idx}`} style={{ minHeight: 72 }} />;
+
+            const bg = getCellBg(day.status, day.isWeekendDay, isDark);
+            const isToday = day.date === todayStr;
+            const locCol = day.status === 'Working' && day.workLocation
+              ? LOCATION_COLORS[day.workLocation]
+              : null;
+            const locationAuditTitle = day.locationAudit
+              ? `Location updated by ${day.locationAudit.editedBy}\n\nPrevious: ${day.locationAudit.previousLocation || 'Not set'}\nCurrent: ${day.locationAudit.newLocation || 'Not set'}\n${new Date(day.locationAudit.editedOn).toLocaleDateString('en-GB')}`
+              : '';
+
+            return (
+              <div key={day.date}
+                onClick={() => !readOnly && openPop(day.date)}
+                style={{
+                  minHeight: 72,
+                  background: bg || (isDark ? theme.card : '#f8fafc'),
+                  border: isToday ? `2px solid ${theme.blue}` : `1px solid ${theme.border}`,
+                  borderRadius: 8,
+                  padding: '6px 6px 4px',
+                  cursor: readOnly ? 'default' : 'pointer',
+                  position: 'relative',
+                  transition: 'background-color 0.25s ease',
+                  userSelect: 'none',
+                }}
+              >
+                <div style={{
+                  fontSize: 12,
+                  fontWeight: isToday ? 800 : 500,
+                  color: isToday ? theme.blue : day.isWeekendDay ? theme.muted : theme.text,
+                }}>
+                  {new Date(day.date + 'T12:00:00').getDate()}
+                  {day.isAdminAdjustment && (
+                    <span style={{ color: '#f59e0b', marginLeft: 2, fontSize: 9 }}>*</span>
+                  )}
+                </div>
+
+                {day.status && day.status !== 'Weekend' && (
+                  <div style={{
+                    fontSize: 9,
+                    color: theme.muted,
+                    marginTop: 2,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.3px',
+                  }}>
+                    {day.status}
+                  </div>
+                )}
+
+                <div style={{
+                  position: 'absolute',
+                  top: 4,
+                  right: 4,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 2,
+                  alignItems: 'flex-end',
+                }}>
+                  {day.isNightDeployment && (
+                    <span style={{ fontSize: 10 }} title="Night Deployment">🌙</span>
+                  )}
+                  {day.isWeekendSupport && (
+                    <span style={{
+                      fontSize: 8,
+                      background: theme.orange + '33',
+                      color: theme.orange,
+                      borderRadius: 3,
+                      padding: '1px 3px',
+                      fontWeight: 700,
+                    }}>W+</span>
+                  )}
+                </div>
+
+                {locCol && (
+                  <div title={day.workLocation || ''} style={{
+                    position: 'absolute',
+                    bottom: 4,
+                    right: 4,
+                    width: 7,
+                    height: 7,
+                    borderRadius: '50%',
+                    background: locCol,
+                  }} />
+                )}
+
+                {canViewLocationAudit && day.locationAudit && (
+                  <div title={locationAuditTitle} style={{
+                    position: 'absolute',
+                    bottom: 3,
+                    right: 14,
+                    fontSize: 10,
+                    color: theme.amber,
+                    fontWeight: 800,
+                  }}>✎</div>
+                )}
+
+                {day.notes?.trim() && (
+                  <div title={day.notes} style={{ position: 'absolute', bottom: 4, left: 4, fontSize: 9 }}>📝</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </>
+    );
+  }
+
+  function DayPopover() {
+    if (!popOpen || !popDay) return null;
+
+    const closePopover = () => {
+      setPopOpen(false);
+      setPopDay(null);
+      popDayRef.current = null;
+    };
+    const statusOptions: { value: WorkingDay['status']; label: string; icon: string; color: string }[] = [
+      { value: 'Working', label: 'Working', icon: '🏢', color: theme.green },
+      { value: 'WFH', label: 'WFH', icon: '🏠', color: theme.blue },
+      { value: 'Leave', label: 'Leave', icon: '🏖', color: theme.red },
+      { value: 'Holiday', label: 'Holiday', icon: '📅', color: theme.indigo },
+      { value: 'Training', label: 'Training', icon: '🎓', color: theme.amber },
+    ];
+    const showLocation = popDay.status === 'Working';
+    const canEditFullDay = targetId === currentUser.id || currentUser.role === 'superadmin' || currentUser.role === 'admin';
+    const canEditWorkLocation = targetId === currentUser.id || canEditOtherWorkLocation;
+    const columnStyle = {
+      background: theme.inputBg,
+      border: `1px solid ${theme.border}`,
+      borderRadius: 10,
+      padding: 16,
+      minWidth: 0,
+    };
+    const chipStyle = (selected: boolean, color: string) => ({
+      border: `1px solid ${selected ? color : theme.border}`,
+      background: selected ? color : theme.card,
+      color: selected ? '#ffffff' : theme.text,
+      borderRadius: 999,
+      padding: '10px 12px',
+      minHeight: 42,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'flex-start',
+      gap: 8,
+      cursor: 'pointer',
+      fontSize: 13,
+      fontWeight: 700,
+      boxShadow: selected ? `0 8px 18px ${color}33` : 'none',
+    });
+
+    return createPortal(
+      <div
+        onClick={closePopover}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.55)',
+          zIndex: 9000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 16,
+        }}
+      >
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{
+            background: theme.card,
+            border: `1px solid ${theme.border}`,
+            borderRadius: 14,
+            width: 'min(960px, calc(100vw - 32px))',
+            maxHeight: 'calc(100vh - 32px)',
+            overflowY: 'auto',
+            boxSizing: 'border-box',
+            boxShadow: '0 24px 70px rgba(15, 23, 42, 0.32)',
+          }}
+        >
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 16,
+            padding: '20px 24px',
+            borderBottom: `1px solid ${theme.border}`,
+          }}>
+            <div style={{ fontWeight: 800, color: theme.text, fontSize: 16 }}>
+              📅 {new Date(popDay.date + 'T12:00:00').toLocaleDateString('en-GB', {
+                weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+              })}
+            </div>
+            <button
+              type="button"
+              onClick={closePopover}
+              aria-label="Close"
+              style={{
+                border: 'none',
+                background: theme.inputBg,
+                color: theme.text,
+                borderRadius: 8,
+                width: 32,
+                height: 32,
+                cursor: 'pointer',
+                fontSize: 20,
+                lineHeight: 1,
+              }}
+            >
+              ×
             </button>
-          );
-        })}
-      </div>
-      {renderQuickEdit()}
-    </div>
-  );
+          </div>
 
-  const renderLocationView = () => {
-    const allLocationRows = editingDays.map((day, index) => ({ day, index })).filter(({ day }) => day.isStatusSet && day.status === 'Working');
-    const pendingRows = allLocationRows.filter(({ day }) => !day.workLocation);
-    const completedRows = allLocationRows.filter(({ day }) => !!day.workLocation);
-    const locationRows = locationView === 'pending' ? pendingRows : completedRows;
-    const isInRange = (date: string) => (!locationRange.from || date >= locationRange.from) && (!locationRange.to || date <= locationRange.to);
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: showLocation ? '1fr 1fr 1.3fr' : '1fr 1.7fr',
+            gap: 16,
+            padding: 24,
+          }}>
+            <section style={columnStyle}>
+              <label style={{ ...commonStyles.label(theme), marginBottom: 12 }}>Status</label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                {statusOptions.map(option => {
+                  const selected = popDay.status === option.value;
+                  return (
+                    <button
+                      key={option.label}
+                      type="button"
+                      disabled={!canEditFullDay}
+                      onClick={() => setField('status', option.value)}
+                      style={{ ...chipStyle(selected, option.color), opacity: canEditFullDay ? 1 : 0.58, cursor: canEditFullDay ? 'pointer' : 'not-allowed' }}
+                    >
+                      <span style={{ color: selected ? '#ffffff' : option.color }}>{option.icon}</span>
+                      <span>{option.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {showLocation && (
+              <section style={columnStyle}>
+                <label style={{ ...commonStyles.label(theme), marginBottom: 12 }}>Work Location</label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                  {LOCATION_OPTIONS.map(location => {
+                    const selected = popDay.workLocation === location;
+                    const color = LOCATION_COLORS[location] || theme.blue;
+                    return (
+                      <button
+                        key={location}
+                        type="button"
+                        disabled={!canEditWorkLocation}
+                        onClick={() => setField('workLocation', location)}
+                        style={{ ...chipStyle(selected, color), opacity: canEditWorkLocation ? 1 : 0.58, cursor: canEditWorkLocation ? 'pointer' : 'not-allowed' }}
+                      >
+                        <span style={{ color: selected ? '#ffffff' : color }}>🏢</span>
+                        <span>{location}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {!popDay.workLocation && (
+                  <div style={{ fontSize: 11, color: theme.amber, marginTop: 10 }}>
+                    ⚠ Please set your office location
+                  </div>
+                )}
+                {canViewLocationAudit && popDay.locationAudit && (
+                  <div style={{ fontSize: 11, color: theme.muted, marginTop: 10, lineHeight: 1.5 }}>
+                    <strong style={{ color: theme.amber }}>Location updated by {popDay.locationAudit.editedBy}</strong>
+                    <br />
+                    {popDay.locationAudit.previousLocation || 'Not set'} → {popDay.locationAudit.newLocation || 'Not set'}
+                    <br />
+                    {new Date(popDay.locationAudit.editedOn).toLocaleDateString('en-GB')}
+                  </div>
+                )}
+              </section>
+            )}
+
+            <section style={columnStyle}>
+              <label style={{ ...commonStyles.label(theme), marginBottom: 12 }}>Other Details</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input type="checkbox" id="nd"
+                    checked={!!popDay.isNightDeployment}
+                    disabled={!canEditFullDay}
+                    onChange={e => setField('isNightDeployment', e.target.checked)}
+                    style={{ accentColor: theme.blue, width: 14, height: 14, cursor: canEditFullDay ? 'pointer' : 'not-allowed' }} />
+                  <label htmlFor="nd" style={{ fontSize: 12, color: theme.muted, cursor: 'pointer' }}>
+                    🌙 Night Deployment
+                  </label>
+                </div>
+
+                {popDay.isWeekendDay && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input type="checkbox" id="ws"
+                      checked={!!popDay.isWeekendSupport}
+                      disabled={!canEditFullDay}
+                      onChange={e => setField('isWeekendSupport', e.target.checked)}
+                      style={{ accentColor: theme.orange, width: 14, height: 14, cursor: canEditFullDay ? 'pointer' : 'not-allowed' }} />
+                    <label htmlFor="ws" style={{ fontSize: 12, color: theme.muted, cursor: 'pointer' }}>
+                      W+ Weekend Support
+                    </label>
+                  </div>
+                )}
+
+                <div>
+                  <label style={commonStyles.label(theme)}>Notes / Path Trace</label>
+                  <textarea
+                    style={{ ...commonStyles.input(theme), resize: 'vertical', minHeight: 112, fontFamily: 'inherit' }}
+                    value={popDay.notes || ''}
+                    disabled={!canEditFullDay}
+                    onChange={e => setField('notes', e.target.value)}
+                    placeholder="What did you work on today?"
+                    maxLength={500}
+                  />
+                  <div style={{ fontSize: 10, color: theme.muted, textAlign: 'right' }}>
+                    {(popDay.notes || '').length}/500
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '0 24px 24px' }}>
+            <button style={commonStyles.button(theme, 'secondary')} onClick={closePopover}>
+              Cancel
+            </button>
+            <button style={commonStyles.button(theme)} onClick={savePop}>
+              Save
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    );
+  }
+
+  function LogTable({ type }: { type: 'night' | 'weekend' }) {
+    const rows = type === 'night' ? specialLogs.nightShifts : specialLogs.weekendWork;
     return (
       <div style={commonStyles.card(theme)}>
-        {renderMonthControls()}
-        {renderAdjustmentNotice()}
-        <h4 style={{ fontSize: '16px', fontWeight: 700, margin: '0 0 12px', color: theme.text }}>Workplace Location</h4>
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-          <button type="button" onClick={() => setLocationView('pending')} style={commonStyles.button(theme, locationView === 'pending' ? 'primary' : 'secondary', 'sm')}>
-            Pending ({pendingRows.length})
-          </button>
-          <button type="button" onClick={() => setLocationView('completed')} style={commonStyles.button(theme, locationView === 'completed' ? 'primary' : 'secondary', 'sm')}>
-            Show completed ({completedRows.length})
-          </button>
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
-          <div style={{ minWidth: '180px' }}><Field label="Edit from" type="date" value={locationRange.from} onChange={(value) => setLocationRange(prev => ({ ...prev, from: value }))} theme={theme} /></div>
-          <div style={{ minWidth: '180px' }}><Field label="Edit to" type="date" value={locationRange.to} onChange={(value) => setLocationRange(prev => ({ ...prev, to: value }))} theme={theme} /></div>
-        </div>
-        <div style={{ overflowX: 'auto', border: `1px solid ${theme.border}`, borderRadius: '8px', maxHeight: '480px' }}>
+        <h3 style={{ fontSize: 15, fontWeight: 600, color: theme.text, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+          {type === 'night' ? <Clock size={18} style={{ color: theme.indigo }} /> : <Calendar size={18} style={{ color: theme.red }} />}
+          {type === 'night' ? 'Night Deployment Logs' : 'Weekend Support Roster'}
+        </h3>
+        <div style={{ overflowX: 'auto' }}>
           <table style={commonStyles.table(theme)}>
             <thead>
               <tr>
+                <th style={commonStyles.th(theme)}>Squad Member</th>
                 <th style={commonStyles.th(theme)}>Date</th>
                 <th style={commonStyles.th(theme)}>Day</th>
                 <th style={commonStyles.th(theme)}>Status</th>
-                <th style={commonStyles.th(theme)}>Location</th>
                 <th style={commonStyles.th(theme)}>Notes</th>
               </tr>
             </thead>
             <tbody>
-              {locationRows.length === 0 ? (
-                <tr>
-                  <td colSpan={5} style={{ ...commonStyles.td(theme), textAlign: 'center', color: locationView === 'pending' ? theme.green : theme.muted, padding: '28px', fontWeight: 700 }}>
-                    {locationView === 'pending' ? <><CheckCircle size={18} style={{ verticalAlign: 'middle', marginRight: '6px' }} />All working days have a location set for this month.</> : 'No completed locations for working days yet.'}
-                  </td>
+              {rows.length === 0 ? (
+                <tr><td colSpan={5} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: 24 }}>No entries found.</td></tr>
+              ) : rows.map((row, index) => (
+                <tr key={`${row.userName}-${row.date}-${index}`} style={{ backgroundColor: index % 2 === 1 ? theme.inputBg : 'transparent' }}>
+                  <td style={{ ...commonStyles.td(theme), fontWeight: 600 }}>{row.userName}</td>
+                  <td style={commonStyles.td(theme)}>{row.date}</td>
+                  <td style={commonStyles.td(theme)}>{row.day}</td>
+                  <td style={commonStyles.td(theme)}>{row.status || '—'}</td>
+                  <td style={{ ...commonStyles.td(theme), maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.notes}>{row.notes || '—'}</td>
                 </tr>
-              ) : locationRows.map(({ day, index }, rowIndex) => {
-                const focused = isInRange(day.date);
-                return (
-                  <tr key={day.date} style={{ backgroundColor: !day.workLocation ? `${theme.amber}18` : rowIndex % 2 ? `${theme.inputBg}cc` : 'transparent', opacity: focused ? 1 : 0.45 }}>
-                    <td style={{ ...commonStyles.td(theme), whiteSpace: 'nowrap', fontWeight: 700 }}>{day.date}</td>
-                    <td style={commonStyles.td(theme)}>{day.dayName}</td>
-                    <td style={commonStyles.td(theme)}>{day.status}</td>
-                    <td style={commonStyles.td(theme)}>
-                      <select value={day.workLocation || ''} disabled={readOnly} onChange={(event) => handleDayChange(index, 'workLocation', event.target.value || null)} style={{ ...commonStyles.input(theme), minWidth: '140px' }}>
-                        <option value="">Not set</option>
-                        {LOCATION_OPTIONS.map(location => <option key={location} value={location}>{location}</option>)}
-                      </select>
-                    </td>
-                    <td style={commonStyles.td(theme)} title={day.notes || ''}>{day.notes || '—'}</td>
-                  </tr>
-                );
-              })}
+              ))}
             </tbody>
           </table>
         </div>
       </div>
     );
-  };
-
-  // Aggregated Team Timesheet Summary (visible to Admin/Lead only)
-  const teamSummaries = useMemo(() => {
-    return appState.timesheetEntries.map((entry) => {
-      const entryHolidayMap = new Map<string, Holiday>();
-      (appState.holidays || [])
-        .filter(holiday => holiday.date.slice(0, 7) === entry.month)
-        .forEach(holiday => entryHolidayMap.set(holiday.date, holiday));
-      const counts = summarizeDays(entry.workingDays, entryHolidayMap);
-
-      return {
-        id: entry.id,
-        userName: entry.userName,
-        month: entry.month,
-        userId: entry.userId,
-        ...counts,
-      };
-    }).sort((a, b) => b.month.localeCompare(a.month));
-  }, [appState.holidays, appState.timesheetEntries]);
-
-  // Special work view log extraction (All shifts / Weekends worked)
-  const specialLogs = useMemo(() => {
-    const nightShifts: { userName: string; date: string; day: string; status: string; notes: string }[] = [];
-    const weekendWork: { userName: string; date: string; day: string; status: string; notes: string }[] = [];
-
-    const weekdayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-    appState.timesheetEntries.forEach((entry) => {
-      // Filter for member only if needed
-      if (!isAdminOrLead && entry.userId !== currentUser.id) return;
-
-      entry.workingDays.forEach((d) => {
-        const dObj = new Date(d.date + 'T00:00:00');
-        const dayOfWeek = weekdayNames[dObj.getDay()] || '';
-
-        if (d.isNightDeployment) {
-          nightShifts.push({
-            userName: entry.userName,
-            date: d.date,
-            day: dayOfWeek,
-            status: d.status,
-            notes: d.notes,
-          });
-        }
-        if (d.isWeekendDay && d.isWeekendSupport && (d.status === 'Working' || d.status === 'WFH')) {
-          weekendWork.push({
-            userName: entry.userName,
-            date: d.date,
-            day: dayOfWeek,
-            status: d.status,
-            notes: d.notes,
-          });
-        }
-      });
-    });
-
-    // Sort newest first
-    nightShifts.sort((a, b) => b.date.localeCompare(a.date));
-    weekendWork.sort((a, b) => b.date.localeCompare(a.date));
-
-    return { nightShifts, weekendWork };
-  }, [appState.timesheetEntries, isAdminOrLead, currentUser.id]);
+  }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {readOnly && <ViewOnlyBanner theme={theme} />}
-      <div style={{ display: 'flex', borderBottom: `2px solid ${theme.border}`, gap: '16px', flexWrap: 'wrap' }}>
-        {([
-          ['calendar', 'Calendar View'],
-          ['monthly', 'Monthly Log'],
-          ['special', 'Special Work Log'],
-          ['locations', 'Workplace Location'],
-          ['holidays', 'Holidays'],
-        ] as const).map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setActiveSubTab(id)}
-            style={{
-              padding: '12px 16px',
-              backgroundColor: 'transparent',
-              border: 'none',
-              borderBottom: activeSubTab === id ? `3px solid ${theme.blue}` : '3px solid transparent',
-              color: activeSubTab === id ? theme.blue : theme.muted,
-              fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-              fontSize: '15px',
-            }}
-          >
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {[
+          ['calendar', 'Calendar'],
+          ['special', 'Special Logs'],
+          ['holidays', 'Holiday List'],
+        ].map(([key, label]) => (
+          <button key={key} type="button" onClick={() => setActiveTab(key as typeof activeTab)} style={commonStyles.button(theme, activeTab === key ? 'primary' : 'secondary')}>
             {label}
           </button>
         ))}
       </div>
 
-      {activeSubTab === 'calendar' ? renderCalendarView() : activeSubTab === 'locations' ? renderLocationView() : activeSubTab === 'monthly' ? (
-        <>
-          {/* Monthly log editing segment */}
-          <div style={commonStyles.card(theme)}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-end', marginBottom: '20px' }}>
-              <div style={{ flex: 1, minWidth: '160px' }}>
-                <label style={commonStyles.label(theme)}>Month</label>
-                <select
-                  value={selectedMonthNumber}
-                  onChange={(event) => setSelectedMonthNumber(Number(event.target.value))}
-                  style={commonStyles.input(theme)}
-                >
-                  {MONTH_NAMES.map((month, index) => (
-                    <option key={month} value={index + 1}>{month}</option>
-                  ))}
-                </select>
-              </div>
+      {activeTab === 'calendar' && (
+        <div style={commonStyles.card(theme)}>
+          <Controls />
 
-              <div style={{ flex: 1, minWidth: '120px' }}>
-                <label style={commonStyles.label(theme)}>Year</label>
-                <select
-                  value={selectedYear}
-                  onChange={(event) => setSelectedYear(Number(event.target.value))}
-                  style={commonStyles.input(theme)}
-                >
-                  {yearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
-                </select>
-              </div>
-
-              {canLogForOthers && (
-                <div style={{ flex: 1, minWidth: '160px' }}>
-                  <label style={commonStyles.label(theme)}>Logging for</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '5px', fontSize: '11px', color: theme.muted }}>
-                    <span style={{ width: '9px', height: '9px', borderRadius: '50%', backgroundColor: USER_COLORS[Math.max(0, appState.users.findIndex(u => u.id === selectedUserId)) % USER_COLORS.length] }} />
-                    {selectedUser.username}
-                  </div>
-                  <select
-                    value={selectedUserId}
-                    onChange={(e) => setSelectedUserId(e.target.value)}
-                    style={commonStyles.input(theme)}
-                  >
-                    {appState.users.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.id === currentUser.id ? `Myself - ${u.username}` : `${u.username} (${u.role})`}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              <div style={{ marginLeft: 'auto', color: lastSavedAt ? theme.green : theme.muted, fontSize: '12px', fontWeight: 700 }}>
-                {lastSavedLabel}
-              </div>
+          {targetId !== currentUser.id && (
+            <div style={{ background: '#f59e0b22', border: '1px solid #f59e0b44', borderRadius: 8, padding: '8px 14px', marginBottom: 12, fontSize: 12, color: '#f59e0b', fontWeight: 600 }}>
+              ⚠ Editing {targetName}'s timesheet as {currentUser.username} ({currentUser.role})
             </div>
+          )}
 
-            {canLogForOthers && selectedUserId !== currentUser.id && (
-              <div style={{ marginBottom: '18px', padding: '12px 14px', borderRadius: '8px', backgroundColor: '#f59e0b', color: '#1f2937', fontWeight: 700, fontSize: '13px' }}>
-                ⚠ You are editing {selectedUser.username}'s timesheet as {currentUser.username} ({currentUser.role === 'superadmin' ? 'Super Admin' : 'Admin'})
-              </div>
-            )}
-
-            {/* Metric counts summary inside editing sheet */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px', marginBottom: '24px' }}>
-              <StatCard label="Working" value={summary.working} accentColor={theme.blue} theme={theme} />
-              <StatCard label="Leave" value={summary.leave} accentColor={theme.amber} theme={theme} />
-              <StatCard label="WFH" value={summary.wfh} accentColor={theme.indigo} theme={theme} />
-              <StatCard label="Holiday" value={summary.holiday} accentColor={theme.green} theme={theme} />
-              <StatCard label="Training" value={summary.training} accentColor={theme.orange} theme={theme} />
-              <StatCard label="Night Deployment" value={summary.nightShifts} accentColor={theme.indigo} theme={theme} />
-              <StatCard label="Weekend Support" value={summary.weekendWork} accentColor={theme.red} theme={theme} />
-            </div>
-
-            {/* Grid list table of day statuses */}
-            <h4 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '12px', color: theme.text }}>
-              {monthHeading}
-            </h4>
-            <div style={{ maxHeight: '450px', overflowY: 'auto', border: `1px solid ${theme.border}`, borderRadius: '8px' }}>
-              <table style={commonStyles.table(theme)}>
-                <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
-                  <tr style={{ backgroundColor: theme.sidebarBg, color: '#ffffff' }}>
-                    <th style={{ ...commonStyles.th(theme), color: '#ffffff' }}>Date</th>
-                    <th style={{ ...commonStyles.th(theme), color: '#ffffff' }}>Day</th>
-                    <th style={{ ...commonStyles.th(theme), color: '#ffffff' }}>Status</th>
-                    <th style={{ ...commonStyles.th(theme), color: '#ffffff', textAlign: 'center' }}>Night Deployment</th>
-                    <th style={{ ...commonStyles.th(theme), color: '#ffffff', textAlign: 'center' }}>Weekend Support</th>
-                    <th style={{ ...commonStyles.th(theme), color: '#ffffff' }}>Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {editingDays.map((day, idx) => {
-                    const holiday = holidayMap.get(day.date);
-                    const effectiveStatus = getEffectiveStatus(day);
-                    const readOnlyHoliday = !!holiday && holiday.type === 'Holiday' && !day.isStatusSet;
-                    return (
-                      <tr key={day.date} style={{ backgroundColor: day.isWeekendDay ? `${theme.muted}0a` : 'transparent' }}>
-                        <td style={{ ...commonStyles.td(theme), fontWeight: 600 }}>
-                          {day.date.substring(8)}
-                          {holiday && (
-                            <span title={holiday.name} style={{ marginLeft: '6px', color: theme.muted, fontSize: '11px', fontWeight: 600 }}>
-                              {holiday.name}
-                            </span>
-                          )}
-                          {day.isAdminAdjustment && (
-                            <span
-                              title={`Adjusted by ${day.lastModifiedBy || 'Unknown'} (${day.lastModifiedByRole || 'Unknown'}) on ${day.lastModifiedAt ? formatDateTime(day.lastModifiedAt) : 'Unknown date'}`}
-                              style={{ color: '#f59e0b', fontWeight: 700, marginLeft: '2px', cursor: 'help' }}
-                            >
-                              *
-                            </span>
-                          )}
-                        </td>
-                        <td style={{ ...commonStyles.td(theme), color: day.isWeekendDay ? '#94a3b8' : theme.text }}>
-                          {day.dayName}
-                          {day.isWeekendDay && <span style={{ marginLeft: '6px', padding: '1px 4px', borderRadius: '4px', backgroundColor: '#94a3b820', color: '#94a3b8', fontSize: '9px', fontWeight: 700 }}>WKD</span>}
-                        </td>
-                        <td style={commonStyles.td(theme)}>
-                          <select
-                            value={effectiveStatus || ''}
-                            disabled={readOnly || readOnlyHoliday}
-                            onChange={(e) => handleDayChange(idx, 'status', e.target.value)}
-                            style={{
-                              ...commonStyles.input(theme),
-                              padding: '4px 8px',
-                              width: '130px',
-                              opacity: readOnly ? 0.6 : 1,
-                              cursor: readOnly ? 'not-allowed' : 'pointer',
-                            }}
-                          >
-                            <option value="">Not set</option>
-                            <option value="Weekend">Weekend</option>
-                            <option value="Working">Working</option>
-                            <option value="WFH">WFH</option>
-                            <option value="Leave">Leave</option>
-                            <option value="Holiday">Holiday</option>
-                            <option value="Training">Training</option>
-                          </select>
-                        </td>
-                        <td style={{ ...commonStyles.td(theme), textAlign: 'center', verticalAlign: 'middle' }}>
-                          <input
-                            type="checkbox"
-                            checked={day.isNightDeployment}
-                            disabled={readOnly}
-                            onChange={(e) => handleDayChange(idx, 'isNightDeployment', e.target.checked)}
-                            style={{
-                              display: 'block',
-                              margin: '0 auto',
-                              width: '16px',
-                              height: '16px',
-                              cursor: readOnly ? 'not-allowed' : 'pointer',
-                              opacity: readOnly ? 0.6 : 1,
-                            }}
-                          />
-                        </td>
-                        <td style={{ ...commonStyles.td(theme), textAlign: 'center', verticalAlign: 'middle' }}>
-                          <input
-                            type="checkbox"
-                            checked={day.isWeekendSupport}
-                            disabled={readOnly || !day.isWeekendDay}
-                            onChange={(e) => handleDayChange(idx, 'isWeekendSupport', e.target.checked)}
-                            style={{
-                              display: 'block',
-                              margin: '0 auto',
-                              width: '16px',
-                              height: '16px',
-                              cursor: readOnly || !day.isWeekendDay ? 'not-allowed' : 'pointer',
-                              opacity: readOnly || !day.isWeekendDay ? 0.45 : 1,
-                            }}
-                          />
-                        </td>
-                        <td style={commonStyles.td(theme)}>
-                          <input
-                            type="text"
-                            placeholder="Optional notes"
-                            value={day.notes || ''}
-                            disabled={readOnly}
-                            onChange={(e) => handleDayChange(idx, 'notes', e.target.value)}
-                            style={{
-                              ...commonStyles.input(theme),
-                              padding: '4px 8px',
-                              fontSize: '12px',
-                              opacity: readOnly ? 0.6 : 1,
-                              cursor: readOnly ? 'not-allowed' : 'text',
-                            }}
-                          />
-                          {day.isAdminAdjustment && (
-                            <div title={`${day.lastModifiedByRole || ''} - ${day.lastModifiedAt ? formatDateTime(day.lastModifiedAt) : ''}`} style={{ marginTop: '5px', color: theme.amber, fontSize: '10px', fontWeight: 700 }}>
-                              ✎ Adjusted by {day.lastModifiedBy}
-                              <div style={{ color: theme.muted, fontWeight: 500 }}>
-                                {day.lastModifiedByRole} - {day.lastModifiedAt ? formatDateTime(day.lastModifiedAt) : ''}
-                              </div>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+            <StatCard value={summary.working} label="Working" accentColor={theme.green} theme={theme} />
+            <StatCard value={summary.wfh} label="WFH" accentColor={theme.blue} theme={theme} />
+            <StatCard value={summary.leave} label="Leave" accentColor={theme.red} theme={theme} />
+            <StatCard value={summary.holiday} label="Holiday" accentColor={theme.indigo} theme={theme} />
+            <StatCard value={summary.training} label="Training" accentColor={theme.amber} theme={theme} />
           </div>
 
-          {/* Admin Team view roll-up summary list */}
-          {isAdminOrLead && (
+          <h4 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 12px', color: theme.text }}>
+            {targetName}'s Roster for {new Date(selYear, selMonth - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}
+          </h4>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 14px', alignItems: 'center', marginBottom: 12, fontSize: 11, color: theme.muted }}>
+            {STATUSES.map(status => (
+              <span key={status} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <span style={{ width: 12, height: 12, borderRadius: 3, backgroundColor: getCellBg(status, false, isDark), border: `1px solid ${theme.border}` }} />
+                {status}
+              </span>
+            ))}
+            <span>🌙 Night Deployment</span>
+            <span style={{ fontWeight: 800 }}>W+ Weekend Support</span>
+          </div>
+
+          <CalendarGrid />
+          <DayPopover />
+        </div>
+      )}
+
+      {activeTab === 'special' && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
+            <LogTable type="night" />
+            <LogTable type="weekend" />
+          </div>
+          {canViewTeam && (
             <div style={commonStyles.card(theme)}>
-              <h3 style={{ fontSize: '15px', fontWeight: 600, color: theme.text, marginBottom: '16px', borderLeft: `4px solid ${theme.blue}`, paddingLeft: '8px' }}>
+              <h3 style={{ fontSize: 15, fontWeight: 600, color: theme.text, marginBottom: 16, borderLeft: `4px solid ${theme.blue}`, paddingLeft: 8 }}>
                 Team Timesheet Rollup Index
               </h3>
               <div style={{ overflowX: 'auto' }}>
                 <table style={commonStyles.table(theme)}>
                   <thead>
-                    <tr style={{ backgroundColor: theme.inputBg }}>
+                    <tr>
                       <th style={commonStyles.th(theme)}>Squad Member</th>
                       <th style={commonStyles.th(theme)}>Month</th>
                       <th style={commonStyles.th(theme)}>Working</th>
@@ -745,41 +815,33 @@ export function Timesheet({ currentUser, appState, setAppState, showToast, theme
                   </thead>
                   <tbody>
                     {teamSummaries.length === 0 ? (
-                      <tr>
-                        <td colSpan={9} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '24px' }}>
-                          No team timesheets logged yet.
-                        </td>
-                      </tr>
-                    ) : (
-                      teamSummaries.map((summaryRow, index) => {
-                        const userIndex = Math.max(0, appState.users.findIndex(user => user.id === summaryRow.userId));
-                        const userColor = USER_COLORS[userIndex % USER_COLORS.length];
-                        return (
-                        <tr key={summaryRow.id} style={{ backgroundColor: index % 2 === 1 ? theme.inputBg : 'transparent', borderLeft: `3px solid ${userColor}` }}>
-                          <td style={{ ...commonStyles.td(theme), fontWeight: 600 }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px' }}>
-                              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: userColor }} />
-                              {summaryRow.userName}
-                            </span>
-                          </td>
-                          <td style={commonStyles.td(theme)}>{summaryRow.month}</td>
-                          <td style={commonStyles.td(theme)}>{summaryRow.working}</td>
-                          <td style={{ ...commonStyles.td(theme), color: summaryRow.leave > 0 ? theme.orange : theme.text }}>{summaryRow.leave}</td>
-                          <td style={commonStyles.td(theme)}>{summaryRow.wfh}</td>
-                          <td style={commonStyles.td(theme)}>{summaryRow.holiday}</td>
-                          <td style={commonStyles.td(theme)}>{summaryRow.training}</td>
-                          <td style={{ ...commonStyles.td(theme), color: theme.indigo, fontWeight: 600 }}>{summaryRow.night}</td>
-                          <td style={{ ...commonStyles.td(theme), color: theme.red, fontWeight: 600 }}>{summaryRow.weekend}</td>
+                      <tr><td colSpan={9} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: 24 }}>No team timesheets logged yet.</td></tr>
+                    ) : teamSummaries.map((row, index) => {
+                      const userIndex = Math.max(0, appState.users.findIndex(user => user.id === row.userId));
+                      const userColor = USER_COLORS[userIndex % USER_COLORS.length];
+                      return (
+                        <tr key={row.id} style={{ backgroundColor: index % 2 === 1 ? theme.inputBg : 'transparent', borderLeft: `3px solid ${userColor}` }}>
+                          <td style={{ ...commonStyles.td(theme), fontWeight: 600 }}>{row.userName}</td>
+                          <td style={commonStyles.td(theme)}>{row.month}</td>
+                          <td style={commonStyles.td(theme)}>{row.working}</td>
+                          <td style={commonStyles.td(theme)}>{row.leave}</td>
+                          <td style={commonStyles.td(theme)}>{row.wfh}</td>
+                          <td style={commonStyles.td(theme)}>{row.holiday}</td>
+                          <td style={commonStyles.td(theme)}>{row.training}</td>
+                          <td style={commonStyles.td(theme)}>{row.night}</td>
+                          <td style={commonStyles.td(theme)}>{row.weekend}</td>
                         </tr>
-                      )})
-                    )}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
         </>
-      ) : activeSubTab === 'holidays' ? (
+      )}
+
+      {activeTab === 'holidays' && (
         <HolidayList
           currentUser={currentUser}
           appState={appState}
@@ -787,99 +849,6 @@ export function Timesheet({ currentUser, appState, setAppState, showToast, theme
           showToast={showToast}
           theme={theme}
         />
-      ) : (
-        <>
-          {/* SPECIAL WORK LOG SUBTAB */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', flexWrap: 'wrap' }}>
-            
-            {/* Night Shifts Table */}
-            <div style={commonStyles.card(theme)}>
-              <h3 style={{ fontSize: '15px', fontWeight: 600, color: theme.text, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Clock size={18} style={{ color: theme.indigo }} />
-                Night Deployment Logs
-              </h3>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={commonStyles.table(theme)}>
-                  <thead>
-                    <tr style={{ backgroundColor: theme.inputBg }}>
-                      <th style={commonStyles.th(theme)}>Squad Member</th>
-                      <th style={commonStyles.th(theme)}>Date</th>
-                      <th style={commonStyles.th(theme)}>Day</th>
-                      <th style={commonStyles.th(theme)}>Status</th>
-                      <th style={commonStyles.th(theme)}>Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {specialLogs.nightShifts.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '24px' }}>
-                          No night deployments found.
-                        </td>
-                      </tr>
-                    ) : (
-                      specialLogs.nightShifts.map((row, idx) => (
-                        <tr key={idx} style={{
-                          backgroundColor: idx % 2 === 1 ? theme.inputBg : 'transparent',
-                          borderLeft: `3px solid ${USER_COLORS[Math.max(0, appState.users.findIndex(user => user.username === row.userName)) % USER_COLORS.length]}`,
-                        }}>
-                          <td style={{ ...commonStyles.td(theme), fontWeight: 600 }}>{row.userName}</td>
-                          <td style={commonStyles.td(theme)}>{row.date}</td>
-                          <td style={commonStyles.td(theme)}>{row.day}</td>
-                          <td style={commonStyles.td(theme)}>{row.status}</td>
-                          <td style={{ ...commonStyles.td(theme), fontStyle: 'italic', fontSize: '12px' }}>{row.notes || '—'}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Weekend Work Table */}
-            <div style={commonStyles.card(theme)}>
-              <h3 style={{ fontSize: '15px', fontWeight: 600, color: theme.text, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Calendar size={18} style={{ color: theme.red }} />
-                Weekend Support Roster
-              </h3>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={commonStyles.table(theme)}>
-                  <thead>
-                    <tr style={{ backgroundColor: theme.inputBg }}>
-                      <th style={commonStyles.th(theme)}>Squad Member</th>
-                      <th style={commonStyles.th(theme)}>Date</th>
-                      <th style={commonStyles.th(theme)}>Day</th>
-                      <th style={commonStyles.th(theme)}>Status</th>
-                      <th style={commonStyles.th(theme)}>Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {specialLogs.weekendWork.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '24px' }}>
-                          No weekend support entries found.
-                        </td>
-                      </tr>
-                    ) : (
-                      specialLogs.weekendWork.map((row, idx) => (
-                        <tr key={idx} style={{
-                          backgroundColor: idx % 2 === 1 ? theme.inputBg : 'transparent',
-                          borderLeft: `3px solid ${USER_COLORS[Math.max(0, appState.users.findIndex(user => user.username === row.userName)) % USER_COLORS.length]}`,
-                        }}>
-                          <td style={{ ...commonStyles.td(theme), fontWeight: 600 }}>{row.userName}</td>
-                          <td style={commonStyles.td(theme)}>{row.date}</td>
-                          <td style={commonStyles.td(theme)}>{row.day}</td>
-                          <td style={commonStyles.td(theme)}>{row.status}</td>
-                          <td style={{ ...commonStyles.td(theme), fontStyle: 'italic', fontSize: '12px' }}>{row.notes || '—'}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-          </div>
-        </>
       )}
     </div>
   );

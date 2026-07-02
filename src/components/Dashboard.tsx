@@ -23,6 +23,7 @@ export function Dashboard({ currentUser, appState, theme, onNavigate }: Dashboar
     squadId: '',
     release: '',
     month: '',
+    sprintId: '',
   });
 
   // Filter Data Entries and Defects based on criteria
@@ -46,6 +47,10 @@ export function Dashboard({ currentUser, appState, theme, onNavigate }: Dashboar
       entries = entries.filter((e) => e.date && e.date.substring(0, 7) === filters.month);
       defects = defects.filter((d) => d.date && d.date.substring(0, 7) === filters.month);
     }
+    if (filters.sprintId) {
+      entries = entries.filter((e) => e.sprintId === filters.sprintId);
+      defects = defects.filter((d) => d.sprintId === filters.sprintId);
+    }
 
     return { entries, defects };
   }, [appState.dataEntries, appState.defects, filters]);
@@ -60,12 +65,14 @@ export function Dashboard({ currentUser, appState, theme, onNavigate }: Dashboar
     let tcExecuted = 0;
     let tcPassed = 0;
     let tcFailed = 0;
+    let totalStoryPoints = 0;
 
     entries.forEach((e) => {
       tcCreated += e.tcCreated || 0;
       tcExecuted += e.tcExecuted || 0;
       tcPassed += e.tcPassed || 0;
       tcFailed += e.tcFailed || 0;
+      totalStoryPoints += e.storyPoints || 0;
     });
 
     const totalDefects = defects.length;
@@ -85,6 +92,7 @@ export function Dashboard({ currentUser, appState, theme, onNavigate }: Dashboar
       tcExecuted,
       tcPassed,
       tcFailed,
+      totalStoryPoints,
       totalDefects,
       sitMisses,
       p1,
@@ -107,17 +115,20 @@ export function Dashboard({ currentUser, appState, theme, onNavigate }: Dashboar
       .filter(entry => entry.date?.slice(0, 7) === prevMonth)
       .filter(entry => !filters.projectId || entry.projectId === filters.projectId)
       .filter(entry => !filters.squadId || entry.squadId === filters.squadId)
-      .filter(entry => !filters.release || entry.release === filters.release);
+      .filter(entry => !filters.release || entry.release === filters.release)
+      .filter(entry => !filters.sprintId || entry.sprintId === filters.sprintId);
     const defects = appState.defects
       .filter(defect => defect.date?.slice(0, 7) === prevMonth)
       .filter(defect => !filters.projectId || defect.projectId === filters.projectId)
       .filter(defect => !filters.squadId || defect.squadId === filters.squadId)
-      .filter(defect => !filters.release || defect.release === filters.release);
+      .filter(defect => !filters.release || defect.release === filters.release)
+      .filter(defect => !filters.sprintId || defect.sprintId === filters.sprintId);
     if (!entries.length && !defects.length) return null;
     const created = entries.reduce((sum, entry) => sum + (entry.tcCreated || 0), 0);
     const executed = entries.reduce((sum, entry) => sum + (entry.tcExecuted || 0), 0);
     const passed = entries.reduce((sum, entry) => sum + (entry.tcPassed || 0), 0);
     const failed = entries.reduce((sum, entry) => sum + (entry.tcFailed || 0), 0);
+    const totalStoryPoints = entries.reduce((sum, entry) => sum + (entry.storyPoints || 0), 0);
     const sitMisses = defects.filter(defect => defect.sitMiss).length;
     return {
       storiesTested: entries.length,
@@ -125,6 +136,7 @@ export function Dashboard({ currentUser, appState, theme, onNavigate }: Dashboar
       tcExecuted: executed,
       tcPassed: passed,
       tcFailed: failed,
+      totalStoryPoints,
       totalDefects: defects.length,
       sitMisses,
       p1: defects.filter(defect => defect.priority === 'P1').length,
@@ -153,6 +165,9 @@ export function Dashboard({ currentUser, appState, theme, onNavigate }: Dashboar
     return releases.map(release => {
       const entries = appState.dataEntries.filter(entry => entry.release === release);
       const defects = appState.defects.filter(defect => defect.release === release);
+      const releaseEntry = [...appState.releaseEntries]
+        .filter(entry => entry.releaseName === release)
+        .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))[0];
       const created = entries.reduce((sum, entry) => sum + (entry.tcCreated || 0), 0);
       const executed = entries.reduce((sum, entry) => sum + (entry.tcExecuted || 0), 0);
       const passed = entries.reduce((sum, entry) => sum + (entry.tcPassed || 0), 0);
@@ -161,9 +176,14 @@ export function Dashboard({ currentUser, appState, theme, onNavigate }: Dashboar
       const sitRate = defects.length ? (defects.filter(defect => defect.sitMiss).length / defects.length) * 100 : 0;
       const p1 = defects.some(defect => defect.priority === 'P1');
       const score = (coverage >= 80 ? 30 : 0) + (passRate >= 90 ? 30 : 0) + (sitRate < 10 ? 20 : 0) + (!p1 ? 20 : 0);
-      return { release, score };
+      const totalStoryPoints = releaseEntry?.totalStoryPoints ?? null;
+      const uatStoryPoints = releaseEntry?.uatStoryPoints ?? null;
+      const uatCoverage = totalStoryPoints !== null && uatStoryPoints !== null && totalStoryPoints > 0
+        ? Math.round((uatStoryPoints / totalStoryPoints) * 100)
+        : null;
+      return { release, score, totalStoryPoints, uatStoryPoints, uatCoverage };
     }).sort((a, b) => b.score - a.score);
-  }, [appState.dataEntries, appState.defects]);
+  }, [appState.dataEntries, appState.defects, appState.releaseEntries]);
 
   const squadCapacity = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
@@ -389,6 +409,7 @@ export function Dashboard({ currentUser, appState, theme, onNavigate }: Dashboar
         dataEntries={appState.dataEntries}
         defects={appState.defects}
         releaseNames={appState.releaseNames || []}
+        sprints={appState.sprints || []}
         filters={filters}
         setFilters={setFilters}
         theme={theme}
@@ -448,6 +469,7 @@ export function Dashboard({ currentUser, appState, theme, onNavigate }: Dashboar
         <StatCard animationIndex={11} label="P1 Defects" value={metrics.p1} accentColor={theme.red} subLabel={trend('p1', true).label} subLabelColor={trend('p1', true).color} theme={theme} />
         <StatCard animationIndex={12} label="P2 Defects" value={metrics.p2} accentColor={theme.orange} subLabel={trend('p2', true).label} subLabelColor={trend('p2', true).color} theme={theme} />
         <StatCard animationIndex={13} label="P3 Defects" value={metrics.p3} accentColor={theme.amber} subLabel={trend('p3', true).label} subLabelColor={trend('p3', true).color} theme={theme} />
+        <StatCard animationIndex={14} label="Total Story Points" value={metrics.totalStoryPoints} accentColor={theme.indigo} theme={theme} />
       </div>
 
       <div style={commonStyles.card(theme)}>
@@ -456,7 +478,20 @@ export function Dashboard({ currentUser, appState, theme, onNavigate }: Dashboar
           {releaseHealth.length ? releaseHealth.map(item => {
             const color = item.score >= 80 ? theme.green : item.score >= 50 ? theme.amber : theme.red;
             const label = item.score >= 80 ? 'Healthy' : item.score >= 50 ? 'At Risk' : 'Critical';
-            return <div key={item.release} style={{ display: 'grid', gridTemplateColumns: '180px 1fr 80px', gap: '10px', alignItems: 'center', fontSize: '12px' }}><b>{item.release}</b><div style={{ height: '10px', backgroundColor: theme.inputBg, borderRadius: '999px', overflow: 'hidden' }}><div style={{ width: `${item.score}%`, height: '100%', backgroundColor: color }} /></div><span style={{ color, fontWeight: 800 }}>{label}</span></div>;
+            return (
+              <div key={item.release} style={{ display: 'grid', gap: '5px', fontSize: '12px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr 80px', gap: '10px', alignItems: 'center' }}>
+                  <b>{item.release}</b>
+                  <div style={{ height: '10px', backgroundColor: theme.inputBg, borderRadius: '999px', overflow: 'hidden' }}><div style={{ width: `${item.score}%`, height: '100%', backgroundColor: color }} /></div>
+                  <span style={{ color, fontWeight: 800 }}>{label}</span>
+                </div>
+                {item.totalStoryPoints !== null && item.uatStoryPoints !== null && item.uatCoverage !== null && (
+                  <div style={{ marginLeft: '180px', color: theme.muted, fontSize: '11px', fontWeight: 700 }}>
+                    Story Points: {item.totalStoryPoints} total · {item.uatStoryPoints} UAT applicable · {item.uatCoverage}% UAT coverage
+                  </div>
+                )}
+              </div>
+            );
           }) : <div style={{ color: theme.muted, fontSize: '12px' }}>No release data yet.</div>}
         </div>
       </div>

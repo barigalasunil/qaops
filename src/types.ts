@@ -31,9 +31,12 @@ export interface User {
   lockedUntil: number | null;
   passwordChangedAt?: string;
   loginHistory?: (string | { timestamp: string; sessionId?: string })[];
+  birthday: string | null; // "MM-DD" — no year for privacy
+  loginCountWithoutBirthday: number; // incremented each login when birthday is null
   reportsTo?: string | null;
   directReports?: string[];
   jobTitle?: string;
+  baseOffice?: 'Bengaluru' | 'Mumbai';
   notifications?: UserNotification[];
 }
 
@@ -53,6 +56,13 @@ export interface Release {
   name: string;
 }
 
+export interface Sprint {
+  id: string;
+  name: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string;   // YYYY-MM-DD
+}
+
 export interface DataEntry {
   id: string;
   date: string;
@@ -65,6 +75,7 @@ export interface DataEntry {
   tcExecuted: number | null;
   tcPassed: number | null;
   tcFailed: number | null;
+  storyPoints: number | null;
   notes: string;
   storyStatus?: 'In Progress' | 'Completed' | 'Blocked' | 'On Hold';
   addedBy: string;
@@ -73,6 +84,8 @@ export interface DataEntry {
   lastEditedAt: string | null;
   lastEditedByRole: User['role'] | null;
   customFields?: Record<string, any>;
+  sprintId: string;
+  sprintName: string;
 }
 
 export interface Defect {
@@ -95,6 +108,8 @@ export interface Defect {
   addedBy: string;
   addedByName: string;
   customFields?: Record<string, any>;
+  sprintId: string;
+  sprintName: string;
 }
 
 export interface ReleaseEntry {
@@ -107,21 +122,32 @@ export interface ReleaseEntry {
   regressionEndDate?: string;
   betaDate?: string;
   prodReleaseDate?: string;
+  totalStoryPoints?: number | null;
+  uatStoryPoints?: number | null;
   addedBy: string;
   addedByName: string;
   createdAt: string;
+  lastEditedBy?: string | null;
+  lastEditedAt?: string | null;
 }
 
 export interface WorkingDay {
   date: string; // YYYY-MM-DD
   dayName: string;
   isWeekendDay: boolean;
-  status: 'Weekend' | 'Working' | 'Leave' | 'Holiday' | 'WFH' | 'Training';
+  status: 'Weekend' | 'Working' | 'Leave' | 'Holiday' | 'WFH' | 'Training' | null;
   isStatusSet: boolean;
   isNightDeployment: boolean;
   isWeekendSupport: boolean;
   notes: string;
   workLocation: string | null;
+  locationAudit?: {
+    editedBy: string;
+    editedByRole: User['role'];
+    editedOn: string;
+    previousLocation: string | null;
+    newLocation: string | null;
+  } | null;
   lastModifiedBy: string | null;
   lastModifiedByRole: User['role'] | null;
   lastModifiedAt: string | null;
@@ -237,27 +263,18 @@ export interface BackupMetadata {
   createdBy: string;
 }
 
-export interface EmailConfig {
-  enabled: boolean;
-  publicKey: string;
-  serviceId: string;
-  appUrl: string;
-  templates: {
-    welcome: string;
-    weeklySummary: string;
-  };
-  senderName: string;
-  replyTo: string;
-}
-
-export interface EmailLogEntry {
+export interface Recognition {
   id: string;
-  sentAt: string;
-  templateType: 'welcome' | 'weeklySummary';
-  to: string;
+  fromUserId: string;
+  fromUsername: string;
+  toUserId: string;
   toUsername: string;
-  status: 'sent' | 'failed';
-  errorReason: string | null;
+  toSquad: string;
+  toProject: string;
+  message: string;
+  emoji: '🌟' | '🏆' | '💪' | '🎯' | '🔥' | '👏' | '🚀' | '💡';
+  projectId: string;
+  createdAt: string;
 }
 
 export interface AppState {
@@ -277,6 +294,6 @@ export interface AppState {
   announcements: Announcement[];
   leaveRequests: LeaveRequest[];
   backupMetadata: BackupMetadata[];
-  emailConfig: EmailConfig;
-  emailLog: EmailLogEntry[];
+  recognitions: Recognition[];
+  sprints: Sprint[];
 }

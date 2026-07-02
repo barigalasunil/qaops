@@ -18,11 +18,14 @@ import {
   Sun,
   Moon,
   Megaphone,
-  CalendarCheck2
+  CalendarCheck2,
+  Home as HomeIcon
 } from 'lucide-react';
 import { ThemeTokens } from '../theme';
 import { User } from '../types';
 import { getEffectivePermissions } from '../utils';
+
+const APP_NAME = "QA Pulse";
 
 interface SidebarProps {
   currentUser: User;
@@ -48,10 +51,11 @@ export function Sidebar({
   theme
 }: SidebarProps) {
   const navItems = [
+    { id: 'home', label: 'Home', icon: HomeIcon, roles: ['superadmin', 'admin', 'lead', 'member', 'guest'] },
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['superadmin', 'admin', 'lead', 'guest'] },
     { id: 'dataEntry', label: 'Data Entry', icon: Database, roles: ['superadmin', 'admin', 'lead', 'member'] },
     { id: 'defects', label: 'Defects', icon: AlertTriangle, roles: ['superadmin', 'admin', 'lead', 'member'] },
-    { id: 'releases', label: 'Releases', icon: Layers, roles: ['superadmin', 'admin', 'lead', 'member'] },
+    { id: 'releases', label: 'Cycles', icon: Layers, roles: ['superadmin', 'admin', 'lead', 'member'] },
     { id: 'timesheet', label: 'Timesheet', icon: Clock, roles: ['superadmin', 'admin', 'lead', 'member'] },
     { id: 'leaveRequests', label: 'Leave Requests', icon: CalendarCheck2, roles: ['superadmin', 'admin', 'lead', 'member'] },
     { id: 'teamStructure', label: 'Team Structure', icon: Network, roles: ['superadmin', 'admin', 'lead', 'guest'] },
@@ -133,7 +137,7 @@ export function Sidebar({
                 Q
               </div>
               <span style={{ fontWeight: 800, fontSize: '15px', tracking: '-0.025em', color: '#ffffff' }}>
-                QA Hub
+                {APP_NAME}
               </span>
               <span style={{ fontSize: '9px', backgroundColor: `${theme.indigo}44`, color: theme.indigo, padding: '1px 3px', borderRadius: '4px', fontWeight: 600 }}>
                 v4

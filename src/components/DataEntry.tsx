@@ -27,6 +27,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
     projectId: '',
     squadId: '',
     release: '',
+    sprintId: '',
     month: '',
   });
 
@@ -45,6 +46,9 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
     tcFailed: 0,
     storyStatus: 'In Progress' as 'In Progress' | 'Completed' | 'Blocked' | 'On Hold',
     notes: '',
+    sprintId: '',
+    sprintName: '',
+    storyPoints: null as number | null,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [newRowId, setNewRowId] = useState<string | null>(null);
@@ -105,6 +109,9 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
       if (filters.release) {
         list = list.filter((e) => e.release === filters.release);
       }
+      if (filters.sprintId) {
+        list = list.filter((e) => e.sprintId === filters.sprintId);
+      }
       if (filters.month) {
         list = list.filter((e) => e.date && e.date.substring(0, 7) === filters.month);
       }
@@ -160,6 +167,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
     if (Object.keys(nextErrors).length) return;
     const isCreatedOnly = form.tcMode === 'created';
 
+    const sprintObj = (appState.sprints || []).find(s => s.id === form.sprintId);
     const newEntry: IDataEntry = {
       id: generateId(),
       date: form.date,
@@ -174,12 +182,15 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
       tcFailed: isCreatedOnly ? null : Number(form.tcFailed) || 0,
       notes: sanitise(form.notes.trim()),
       storyStatus: form.storyStatus,
+      storyPoints: form.storyPoints,
       addedBy: currentUser.id,
       addedByName: currentUser.username,
       lastEditedBy: null,
       lastEditedAt: null,
       lastEditedByRole: null,
-      customFields: Object.fromEntries(Object.entries(customFormVals).map(([key, value]) => [key, sanitise(value)]))
+      customFields: Object.fromEntries(Object.entries(customFormVals).map(([key, value]) => [key, sanitise(value)])),
+      sprintId: form.sprintId || '',
+      sprintName: sprintObj?.name || '',
     };
 
     setAppState((prev) => ({
@@ -214,6 +225,9 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
       tcFailed: 0,
       storyStatus: 'In Progress',
       notes: '',
+      sprintId: '',
+      sprintName: '',
+      storyPoints: null,
     });
     setCustomFormVals({});
 
@@ -236,6 +250,9 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
       tcFailed: entry.tcFailed ?? 0,
       storyStatus: entry.storyStatus || 'In Progress',
       notes: entry.notes || '',
+      sprintId: entry.sprintId || '',
+      sprintName: entry.sprintName || '',
+      storyPoints: entry.storyPoints ?? null,
     });
     setEditErrors({});
   };
@@ -257,6 +274,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
     setEditErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
     const isCreatedOnly = editForm.tcMode === 'created';
+    const editSprintObj = (appState.sprints || []).find(s => s.id === editForm.sprintId);
     setAppState(previous => ({
       ...previous,
       dataEntries: previous.dataEntries.map(entry => entry.id === editingEntry.id ? {
@@ -273,9 +291,12 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
         tcFailed: isCreatedOnly ? null : Number(editForm.tcFailed) || 0,
         notes: sanitise(editForm.notes.trim()),
         storyStatus: editForm.storyStatus,
+        storyPoints: editForm.storyPoints,
         lastEditedBy: currentUser.username,
         lastEditedAt: new Date().toISOString(),
         lastEditedByRole: currentUser.role,
+        sprintId: editForm.sprintId || '',
+        sprintName: editSprintObj?.name || '',
       } : entry),
       auditLog: [{
         id: generateId(),
@@ -346,10 +367,23 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
             />
             {(!appState.releaseNames || appState.releaseNames.length === 0) && (
               <p style={{ gridColumn: '1 / -1', margin: '-10px 0 0', color: theme.muted, fontSize: '12px' }}>
-                Go to Releases → Release Names to add release names first.
+                Go to Cycles → Release Names to add release names first.
               </p>
             )}
-            
+
+            <Field
+              label="Sprint"
+              type="select"
+              value={form.sprintId || ''}
+              onChange={(v) => updateForm('sprintId', v, { sprintName: v ? (appState.sprints || []).find(s => s.id === v)?.name || '' : '' })}
+              options={(appState.sprints || []).sort((a, b) => b.startDate.localeCompare(a.startDate)).map(s => {
+                const label = `${s.name} (${new Date(s.startDate+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'})} – ${new Date(s.endDate+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})})`;
+                return { value: s.id, label };
+              })}
+              placeholder="— No Sprint —"
+              theme={theme}
+            />
+
             <Field
               label="Project"
               type="select"
@@ -376,6 +410,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
 
             <Field label="Jira Story Link" type="text" placeholder="https://jira.company.com/browse/PROJ-123" value={form.jiraStoryLink} onChange={(v) => updateForm('jiraStoryLink', v)} error={errors.jiraStoryLink} required theme={theme} />
             <Field label="Jira Story Summary / Title" type="text" placeholder="e.g. Implement checkout logic" value={form.jiraStorySummary} onChange={(v) => updateForm('jiraStorySummary', v)} error={errors.jiraStorySummary} required theme={theme} />
+            <Field label="Story Points" type="number" min={0} placeholder="e.g. 5" value={form.storyPoints ?? ''} onChange={(v) => updateForm('storyPoints', v === '' ? null : Number(v))} helper="Optional — story points for this story" theme={theme} />
             <Field
               label="Story Status"
               type="select"
@@ -437,6 +472,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
           dataEntries={appState.dataEntries}
           defects={appState.defects}
           releaseNames={appState.releaseNames || []}
+          sprints={appState.sprints || []}
           filters={filters}
           setFilters={setFilters}
           theme={theme}
@@ -454,6 +490,8 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
               <tr>
                 <th style={{ ...commonStyles.th(theme), minWidth: '98px' }}>Date</th>
                 <th style={commonStyles.th(theme)}>Release</th>
+                <th style={commonStyles.th(theme)}>Sprint</th>
+                <th style={commonStyles.th(theme)}>SP</th>
                 <th style={commonStyles.th(theme)}>Project</th>
                 <th style={{ ...commonStyles.th(theme), borderRight: `1px solid ${theme.border}` }}>Squad</th>
                 <th style={commonStyles.th(theme)}>Story</th>
@@ -471,7 +509,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
             <tbody>
               {visibleEntries.length === 0 ? (
                 <tr>
-                  <td colSpan={readOnly ? 13 : 14} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '28px' }}>
+                  <td colSpan={readOnly ? 15 : 16} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '28px' }}>
                     <div style={{ fontSize: '18px', marginBottom: '4px' }}>∅</div>
                     No test entries found.
                   </td>
@@ -488,6 +526,13 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
                     <tr className={row.id === newRowId ? 'row-flash' : undefined} style={{ backgroundColor: index % 2 === 1 ? `${theme.inputBg}cc` : 'transparent', borderLeft: `4px solid ${projectColor}` }}>
                       <td style={{ ...commonStyles.td(theme), whiteSpace: 'nowrap' }}>{formatDate(row.date)}</td>
                       <td style={commonStyles.td(theme)}>{row.release || '—'}</td>
+                      <td style={commonStyles.td(theme)}>{row.sprintName || '—'}</td>
+                      <td style={commonStyles.td(theme)}>
+                        {row.storyPoints != null
+                          ? <span style={commonStyles.badge(theme, theme.blue)}>{row.storyPoints}</span>
+                          : <span style={{ color: theme.muted }}>—</span>
+                        }
+                      </td>
                       <td style={commonStyles.td(theme)}>{projectMap.get(row.projectId) || 'Unknown'}</td>
                       <td style={{ ...commonStyles.td(theme), borderRight: `1px solid ${theme.border}` }}>{squadMap.get(row.squadId) || 'Unknown'}</td>
                       <td style={commonStyles.td(theme)}>
@@ -543,7 +588,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
                     </tr>
                     {row.lastEditedAt && (
                       <tr style={{ backgroundColor: index % 2 === 1 ? `${theme.inputBg}cc` : 'transparent', borderLeft: `4px solid ${projectColor}` }}>
-                        <td colSpan={readOnly ? 13 : 14} style={{ ...commonStyles.td(theme), paddingTop: '0', color: theme.muted, fontSize: '11px' }}>
+                        <td colSpan={readOnly ? 15 : 16} style={{ ...commonStyles.td(theme), paddingTop: '0', color: theme.muted, fontSize: '11px' }}>
                           Last edited by {row.lastEditedBy || 'Unknown'} on {formatDateTime(row.lastEditedAt)}
                         </td>
                       </tr>
@@ -558,7 +603,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
       </div>
       {editingEntry && editForm && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 1000, backgroundColor: 'rgba(15,23,42,0.58)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '18px', animation: 'modalBackdropIn 160ms ease-out' }}>
-          <form noValidate onSubmit={handleSaveEdit} style={{ ...commonStyles.card(theme), width: '100%', maxWidth: '600px', padding: '28px', maxHeight: '88vh', overflowY: 'auto', animation: 'modalPanelIn 180ms ease-out' }}>
+          <form noValidate onClick={e => e.stopPropagation()} onSubmit={handleSaveEdit} style={{ ...commonStyles.card(theme), width: '100%', maxWidth: '600px', padding: '28px', maxHeight: '88vh', overflowY: 'auto', animation: 'modalPanelIn 180ms ease-out' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '18px' }}>
               <h3 style={{ margin: 0, fontSize: '18px' }}>Edit Entry - {editingEntry.jiraStorySummary}</h3>
               <button type="button" onClick={() => setEditingEntry(null)} style={{ border: 0, background: 'transparent', color: theme.muted, cursor: 'pointer' }}><X size={18} /></button>
@@ -566,10 +611,12 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
               <Field label="Date" type="date" value={editForm.date} onChange={(v) => updateEditForm('date', v)} error={editErrors.date} required theme={theme} />
               <Field label="Release" type="select" value={editForm.release} onChange={(v) => updateEditForm('release', v)} options={(appState.releaseNames || []).map((r) => ({ value: r.name, label: r.name }))} required error={editErrors.release} theme={theme} />
+              <Field label="Sprint" type="select" value={editForm.sprintId || ''} onChange={(v) => updateEditForm('sprintId', v, { sprintName: v ? (appState.sprints || []).find(s => s.id === v)?.name || '' : '' })} options={(appState.sprints || []).sort((a, b) => b.startDate.localeCompare(a.startDate)).map(s => { const label = `${s.name} (${new Date(s.startDate+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'})} – ${new Date(s.endDate+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})})`; return { value: s.id, label }; })} placeholder="— No Sprint —" theme={theme} />
               <Field label="Project" type="select" value={editForm.projectId} onChange={(v) => updateEditForm('projectId', v, { squadId: '' })} options={projectOptions} required error={editErrors.projectId} theme={theme} />
               <Field label="Squad" type="select" value={editForm.squadId} onChange={(v) => updateEditForm('squadId', v)} options={appState.squads.filter(s => !editForm.projectId || !s.projectId || s.projectId === editForm.projectId).map(s => ({ value: s.id, label: s.name }))} required error={editErrors.squadId} theme={theme} />
               <Field label="Jira Story Link" type="text" value={editForm.jiraStoryLink} onChange={(v) => updateEditForm('jiraStoryLink', v)} error={editErrors.jiraStoryLink} required theme={theme} />
               <Field label="Jira Story Summary" type="text" value={editForm.jiraStorySummary} onChange={(v) => updateEditForm('jiraStorySummary', v)} error={editErrors.jiraStorySummary} required theme={theme} />
+              <Field label="Story Points" type="number" min={0} value={editForm.storyPoints ?? ''} onChange={(v) => updateEditForm('storyPoints', v === '' ? null : Number(v))} helper="Optional — story points for this story" theme={theme} />
               <Field label="Story Status" type="select" value={editForm.storyStatus} onChange={(v) => updateEditForm('storyStatus', v)} options={['In Progress', 'Completed', 'Blocked', 'On Hold'].map(status => ({ value: status, label: status }))} theme={theme} />
               <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '14px', alignItems: 'center', padding: '4px 0' }}>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 700 }}>
@@ -600,7 +647,7 @@ export function DataEntry({ currentUser, appState, setAppState, showToast, theme
       )}
       {confirmDeleteEntryId && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '32px 28px', width: '100%', maxWidth: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.4)' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '32px 28px', width: '100%', maxWidth: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.4)' }}>
             <h3 style={{ margin: '0 0 12px', fontSize: '18px' }}>Delete Entry?</h3>
             <p style={{ fontSize: '14px', color: theme.text, margin: '0 0 24px' }}>Are you sure you want to delete this test entry?</p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>

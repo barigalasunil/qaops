@@ -5,13 +5,15 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { ThemeTokens, commonStyles } from '../theme';
-import { AppState, CustomField, EmailConfig, Project, Squad, User, UserPermissions } from '../types';
-import { exportToCSV, generateId, generateStrongPassword, getPermissionsForRole, hashPassword, sanitise, sendEmailJS, maskEmail, getRoleSummary, getFirstSteps, LOGIN_INSTRUCTIONS_TEXT, formatDateTime } from '../utils';
+import { AppState, CustomField, Project, Squad, User, UserPermissions } from '../types';
+import { exportToCSV, generateId, generateStrongPassword, getPermissionsForRole, hashPassword, sanitise, formatDateTime } from '../utils';
 import { Field } from './Shared';
 import { PermissionsTable } from './PermissionsTable';
 import { BackupRestore } from './BackupRestore';
 import { BulkImport } from './BulkImport';
-import { Plus, Trash2, Shield, UserX, UserCheck, Key, Settings as SettingsIcon, X, HardDrive, Upload, Mail, Send, Save } from 'lucide-react';
+import { Plus, Trash2, Shield, UserX, UserCheck, Key, Settings as SettingsIcon, X, HardDrive } from 'lucide-react';
+
+const BASE_OFFICE_OPTIONS: User['baseOffice'][] = ['Bengaluru', 'Mumbai'];
 
 interface SettingsProps {
   currentUser: User;
@@ -24,7 +26,7 @@ interface SettingsProps {
 }
 
 export function Settings({ currentUser, appState, setAppState, showToast, theme, readOnly = false, onUpdateCurrentUser }: SettingsProps) {
-  const [activeTab, setActiveTab] = useState<'users' | 'projects' | 'squads' | 'fields' | 'audit' | 'backup' | 'import' | 'email'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'projects' | 'squads' | 'fields' | 'audit' | 'backup' | 'import'>('users');
 
   // Input states for My Account
   const [editAccountForm, setEditAccountForm] = useState({
@@ -61,6 +63,9 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
     projectId: '',
     reportsTo: '',
     jobTitle: '',
+    baseOffice: 'Bengaluru' as User['baseOffice'],
+    birthdayDay: '',
+    birthdayMonth: '',
   });
   const [userErrors, setUserErrors] = useState<Record<string, string>>({});
   const updateUserForm = (key: keyof typeof userForm, value: any, extras: Partial<typeof userForm> = {}) => {
@@ -174,58 +179,24 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
     else if (appState.users.some((u) => u.username.toLowerCase() === username)) nextErrors.username = 'Username already exists.';
     if (userForm.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userForm.email)) nextErrors.email = 'Please enter a valid email address.';
     if (!userForm.role || !allowedRoles.includes(userForm.role)) nextErrors.role = 'Role is required.';
-    if ((userForm.role === 'lead' || userForm.role === 'member' || userForm.role === 'guest') && !(isAdmin ? currentUser.projectId : userForm.projectId)) nextErrors.projectId = 'Project is required.';
-    if (userForm.role === 'member' && !userForm.squadId) nextErrors.squadId = 'Squad is required.';
-    if ((userForm.role === 'member' || userForm.role === 'lead') && !userForm.reportsTo) nextErrors.reportsTo = 'Direct manager is required.';
+    if ((userForm.role === 'admin' || userForm.role === 'lead' || userForm.role === 'member') && !(isAdmin ? currentUser.projectId : userForm.projectId)) {
+      nextErrors.projectId = userForm.role === 'admin' ? 'Project is required for Admin' : 'Project is required.';
+    }
+    if ((userForm.role === 'lead' || userForm.role === 'member') && !userForm.squadId) nextErrors.squadId = 'Squad is required.';
     setUserErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
 
-    const projectId = userForm.role === 'superadmin'
+    const projectId = userForm.role === 'superadmin' || userForm.role === 'guest'
       ? null
       : (isAdmin ? currentUser.projectId : userForm.projectId);
-    const squadId = userForm.role === 'member'
+    const squadId = userForm.role === 'lead' || userForm.role === 'member'
       ? userForm.squadId
       : null;
 
     // STEP 1 — Generate plain text password FIRST
     const plainPassword = generateStrongPassword();
 
-    // STEP 2 — Send email with plain text password BEFORE hashing
-    let emailSent = false;
-    if (userForm.email && appState.emailConfig?.enabled) {
-      const projectName = projectMap.get(isAdmin ? (currentUser.projectId || '') : userForm.projectId) || '';
-      const squadName = squadMap.get(userForm.squadId) || '';
-      const result = await sendEmailJS(appState.emailConfig, appState.emailConfig.templates.welcome, {
-        to_email: userForm.email,
-        to_name: userForm.username,
-        username: userForm.username,
-        temp_password: plainPassword,
-        role: userForm.role,
-        project: projectName || 'All Projects',
-        squad: squadName || '—',
-        role_summary: getRoleSummary(userForm.role),
-        first_steps: getFirstSteps(userForm.role),
-        login_instructions: LOGIN_INSTRUCTIONS_TEXT,
-        app_url: appState.emailConfig?.appUrl || '[ App URL ]',
-        sender_name: appState.emailConfig?.senderName || 'QA Hub',
-        reply_to: appState.emailConfig?.replyTo || '',
-      });
-      emailSent = result.success;
-      setAppState(prev => ({
-        ...prev,
-        emailLog: [{
-          id: generateId(),
-          sentAt: new Date().toISOString(),
-          templateType: 'welcome' as const,
-          to: maskEmail(userForm.email || ''),
-          toUsername: userForm.username,
-          status: result.success ? 'sent' as const : 'failed' as const,
-          errorReason: result.success ? null : (result.reason || null),
-        }, ...(prev.emailLog || [])].slice(0, 200),
-      }));
-    }
-
-    // STEP 3 — Hash AFTER email is sent
+    // STEP 2 — Hash password
     const hashedPassword = await hashPassword(plainPassword);
 
     // STEP 4 — Save user with hashed password
@@ -246,6 +217,11 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
       lockedUntil: null,
       reportsTo: (userForm.role === 'superadmin' || userForm.role === 'guest' || userForm.role === 'admin') ? null : userForm.reportsTo,
       directReports: [],
+      baseOffice: userForm.baseOffice || 'Bengaluru',
+      birthday: userForm.birthdayDay && userForm.birthdayMonth
+        ? `${userForm.birthdayMonth.padStart(2, '0')}-${userForm.birthdayDay.padStart(2, '0')}`
+        : null,
+      loginCountWithoutBirthday: userForm.birthdayDay && userForm.birthdayMonth ? 99 : 0,
       jobTitle: sanitise(userForm.jobTitle.trim()),
       passwordChangedAt: new Date().toISOString(),
       loginHistory: [],
@@ -286,17 +262,16 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
       projectId: isAdmin ? (currentUser.projectId || '') : '',
       reportsTo: '',
       jobTitle: '',
+      baseOffice: 'Bengaluru',
+      birthdayDay: '',
+      birthdayMonth: '',
     });
     setUserPermissions(getPermissionsForRole('member'));
 
-    // STEP 5 — Show in-app modal or toast
-    if (userForm.email && appState.emailConfig?.enabled) {
-      showToast(emailSent ? `User created. Welcome email sent to ${userForm.email}.` : 'User created. Welcome email could not be sent — check Email Config.', emailSent ? 'success' : 'error');
-    } else {
-      setGeneratedUsername(userForm.username);
-      setGeneratedPassword(plainPassword);
-      setShowPasswordModal(true);
-    }
+    // STEP 5 — Show in-app modal with generated password
+    setGeneratedUsername(userForm.username);
+    setGeneratedPassword(plainPassword);
+    setShowPasswordModal(true);
   };
 
   const handleToggleEditPermissions = (u: User) => {
@@ -346,6 +321,24 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
     showToast('Permissions updated successfully!', 'success');
     setEditingPermissionsUserId(null);
     setEditingPermissionsVal(null);
+  };
+
+  const handleBaseOfficeChange = (userId: string, baseOffice: User['baseOffice']) => {
+    setAppState((prev) => ({
+      ...prev,
+      users: prev.users.map((user) => user.id === userId ? { ...user, baseOffice: baseOffice || 'Bengaluru' } : user),
+      auditLog: [{
+        id: generateId(),
+        timestamp: new Date().toISOString(),
+        userId: currentUser.id,
+        username: currentUser.username,
+        role: currentUser.role,
+        action: 'PERMISSION_CHANGE',
+        details: `Updated base office for ${prev.users.find(user => user.id === userId)?.username || userId} to ${baseOffice || 'Bengaluru'}`,
+        ipHint: 'Browser session',
+      }, ...(prev.auditLog || [])].slice(0, 500),
+    }));
+    showToast('Base Office updated successfully!', 'success');
   };
 
   const handlePromoteToLead = (userId: string) => {
@@ -451,249 +444,8 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
     });
   };
 
-  const generateWelcomeEmail = (username: string, password: string, role: string, projectName: string, squadName: string): string => {
-    const base = [
-      `Hi ${username},`,
-      '',
-      'You have been added to QA Hub, our internal QA metrics and team management platform.',
-      '',
-      'Your login details are below. Please keep these confidential.',
-      '',
-      '─────────────────────────────────',
-      'App URL:     {APP_URL}',
-      `Username:    ${username}`,
-      `Password:    ${password}`,
-      `Role:        ${role === 'superadmin' ? 'Super Admin' : role.charAt(0).toUpperCase() + role.slice(1)}`,
-      `Project:     ${projectName || (role === 'superadmin' ? 'All Projects' : '—')}`,
-      `Squad:       ${squadName || '—'}`,
-      '─────────────────────────────────',
-      '',
-      'HOW TO LOG IN:',
-      '1. Open the app URL in your browser',
-      '2. Enter your username and password',
-      '3. On first login you will be prompted to change your password',
-      '4. Choose a strong password (min 8 characters, one uppercase, one number)',
-      '5. You will be asked to set up a security question — answer carefully as',
-      '   you will need it to reset your password in future',
-      '',
-      'HOW TO LOG OUT:',
-      '- Click the Sign Out button (↩) at the bottom of the left sidebar',
-      '- Your session will also automatically lock after 10 minutes of inactivity',
-      '- Closing your browser tab ends your session',
-    ];
-
-    const roleSections: Record<string, string[]> = {
-      superadmin: [
-        '',
-        'YOUR ROLE: Super Admin',
-        '─────────────────────',
-        'As Super Admin you have full access to the entire QA Hub platform across all projects.',
-        '',
-        'YOUR RESPONSIBILITIES:',
-        '• Create and manage Admin accounts for each project',
-        '• Add and manage Projects across the organisation',
-        '• Configure system-wide settings (Squads, Custom Fields)',
-        '• View all metrics, data entries, defects, releases, and timesheets across all projects',
-        '• Manage the Holiday List for the organisation',
-        '• Perform data backups and restores',
-        '• Review the Audit Log for security events',
-        '• Post organisation-wide Announcements',
-        '',
-        'WHAT YOU CAN DO:',
-        '• Full access to all pages and all data',
-        '• Create, edit, promote, and remove any user',
-        '• Reset any user\'s password',
-        '• Override any team member\'s timesheet on their behalf',
-        '• Export any report in any format',
-        '',
-        'WHAT TO DO FIRST:',
-        '1. Change your default password immediately (Settings → Edit My Account)',
-        '2. Add your Projects (Settings → Projects)',
-        '3. Add Squads under each Project (Settings → Squads)',
-        '4. Create Admin accounts for each Project',
-        '5. Add Releases for the current cycle (Releases → Manage Releases)',
-        '6. Add the Holiday List for this year (Holiday List)',
-      ],
-      admin: [
-        '',
-        `YOUR ROLE: Admin`,
-        '─────────────────────',
-        `As Admin you have full access within your assigned project: ${projectName}`,
-        '',
-        'YOUR RESPONSIBILITIES:',
-        '• Create and manage Lead and Member accounts for your project',
-        '• Oversee all QA activities, metrics, and defects within your project',
-        '• Approve or reject leave requests from your team',
-        '• Manage Squads within your project',
-        '• Post project-level Announcements',
-        '',
-        'WHAT YOU CAN DO:',
-        '• View all data entries, defects, releases, and timesheets in your project',
-        '• Create Lead and Member user accounts (within your project only)',
-        '• Adjust any team member\'s timesheet on their behalf',
-        '• Export all reports for your project',
-        '• Promote Members to Lead role',
-        '',
-        'WHAT YOU CANNOT DO:',
-        '• Access data from other projects',
-        '• Create Admin or Super Admin accounts',
-        '• Modify global settings (Projects list, global Custom Fields)',
-        '',
-        'WHAT TO DO FIRST:',
-        '1. Change your default password immediately',
-        '2. Create Lead accounts for your squads',
-        '3. Ensure squad members are correctly assigned',
-      ],
-      lead: [
-        '',
-        'YOUR ROLE: Lead',
-        '─────────────────────',
-        'As Lead you manage your squad and oversee their QA activities.',
-        '',
-        'YOUR RESPONSIBILITIES:',
-        '• Review and approve/reject leave requests from your direct reports',
-        '• Monitor data entries and defects logged by your squad',
-        '• Ensure timesheets are filled by squad members',
-        '• Review the Dashboard metrics for your squad',
-        '• Log data entries and defects yourself',
-        '',
-        'WHAT YOU CAN DO:',
-        '• View all data entries, defects, and releases in your project',
-        '• Log your own data entries and defects',
-        '• Approve or reject leave requests from your team members',
-        '• Export reports for your project',
-        '• View the Team Structure and Squad Capacity',
-        '',
-        'WHAT YOU CANNOT DO:',
-        '• Create or manage user accounts',
-        '• Adjust other members\' timesheets',
-        '• Modify settings',
-        '',
-        'WHAT TO DO FIRST:',
-        '1. Change your default password immediately',
-        '2. Familiarise yourself with the Dashboard for your project',
-        '3. Start logging data entries and defects',
-      ],
-      member: [
-        '',
-        'YOUR ROLE: Member',
-        '─────────────────────',
-        'As a Member you log your QA work — data entries, defects, and timesheet.',
-        '',
-        'YOUR RESPONSIBILITIES:',
-        '• Log data entries for stories you have tested',
-        '• Log defects you have found',
-        '• Fill your timesheet daily or weekly',
-        '• Submit leave requests through the app',
-        '',
-        'WHAT YOU CAN DO:',
-        '• Add data entries for your own stories tested',
-        '• Log defects with Jira links',
-        '• Fill your monthly timesheet (calendar or table view)',
-        '• Submit leave requests',
-        '• View your own entries and defects',
-        '',
-        'WHAT YOU CANNOT DO:',
-        '• View other members\' data entries or defects',
-        '• Access the Dashboard or summary metrics',
-        '• Export reports',
-        '• Manage settings',
-        '',
-        'WHAT TO DO FIRST:',
-        '1. Change your default password immediately',
-        '2. Fill your timesheet for the current month',
-        '3. Start logging stories tested and defects found',
-      ],
-      guest: [
-        '',
-        'YOUR ROLE: Guest (Read-Only Observer)',
-        '─────────────────────────────────────',
-        'As a Guest you have read-only access to metrics and team information.',
-        '',
-        'YOUR RESPONSIBILITIES:',
-        '• Review project and squad quality metrics on the Dashboard',
-        '• View the team structure and reporting hierarchy',
-        '• Download summary and defect reports as needed',
-        '',
-        'WHAT YOU CAN DO:',
-        '• View the Dashboard — all KPI metrics, project breakdown, squad breakdown, defect summary',
-        '• View the Team Structure — full org tree for your project',
-        '• Download Overall Summary and Defect Log reports (Excel, CSV, PDF)',
-        '',
-        'WHAT YOU CANNOT DO:',
-        '• Log or edit any data (data entries, defects, timesheets)',
-        '• Access team member timesheets',
-        '• Manage settings, users, or any configuration',
-        '• View raw data tables — only aggregated metrics',
-        '',
-        'NOTE: Your access is strictly read-only. If you need to make changes,',
-        'contact your Admin to request an appropriate role.',
-      ],
-    };
-
-    const section = roleSections[role] || [];
-    return [...base, ...section].join('\n');
-  };
-
   // ---------------------------------------------------------------------------
-  // EMAIL CONFIG OPERATIONS
-  // ---------------------------------------------------------------------------
-  const handleSaveEmailConfig = (e: React.FormEvent) => {
-    e.preventDefault();
-    const config = appState.emailConfig;
-    if (config?.enabled) {
-      if (!config.publicKey || !config.serviceId || !config.templates.welcome) {
-        showToast('Public Key, Service ID, and Welcome Template ID are required when EmailJS is enabled.', 'error');
-        return;
-      }
-    }
-    setAppState(prev => ({ ...prev, emailConfig: { ...prev.emailConfig } }));
-    if ((window as any).emailjs && config?.publicKey) {
-      (window as any).emailjs.init({ publicKey: config.publicKey });
-    }
-    showToast('Email configuration saved.', 'success');
-  };
-
-  const handleSendTestEmail = async () => {
-    const config = appState.emailConfig;
-    if (!config?.enabled || !config?.publicKey || !config?.serviceId || !config?.templates?.welcome) {
-      showToast('Complete the EmailJS configuration first (enable, Public Key, Service ID, Welcome Template).', 'error');
-      return;
-    }
-    if (!currentUser.email) {
-      showToast('Your account needs an email address set in Edit My Account above.', 'error');
-      return;
-    }
-    const result = await sendEmailJS(config, config.templates.welcome, {
-      to_email: currentUser.email,
-      to_name: currentUser.username,
-      username: currentUser.username,
-      temp_password: '••••••••',
-      role: currentUser.role,
-      project: projectMap.get(currentUser.projectId || '') || 'All Projects',
-      squad: squadMap.get(currentUser.squadId || '') || '—',
-      role_summary: getRoleSummary(currentUser.role),
-      first_steps: getFirstSteps(currentUser.role),
-      login_instructions: LOGIN_INSTRUCTIONS_TEXT,
-    });
-    setAppState(prev => ({
-      ...prev,
-      emailLog: [{
-        id: generateId(),
-        sentAt: new Date().toISOString(),
-        templateType: 'welcome' as const,
-        to: maskEmail(currentUser.email || ''),
-        toUsername: currentUser.username,
-        status: result.success ? 'sent' as const : 'failed' as const,
-        errorReason: result.success ? null : (result.reason || null),
-      }, ...(prev.emailLog || [])].slice(0, 200),
-    }));
-    if (result.success) {
-      showToast(`Test email sent to ${currentUser.email}.`, 'success');
-    } else {
-      showToast(`Test email failed: ${result.reason}`, 'error');
-    }
-  };
+  // PROJECTS OPERATIONS
 
   // ---------------------------------------------------------------------------
   // PROJECTS OPERATIONS
@@ -961,7 +713,7 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
       
       {/* Tab selection */}
       <div style={{ display: 'flex', borderBottom: `2px solid ${theme.border}`, gap: '16px' }}>
-        {(['users', ...(isSuperAdmin ? ['projects'] : []), 'squads', 'fields', ...(isSuperAdmin ? ['audit'] : []), ...(isSuperAdmin ? ['backup'] : []), ...(isSuperAdmin ? ['import'] : []), ...(isSuperAdmin ? ['email'] : [])] as const).map((tab) => (
+        {(['users', ...(isSuperAdmin ? ['projects'] : []), 'squads', 'fields', ...(isSuperAdmin ? ['audit'] : []), ...(isSuperAdmin ? ['backup'] : []), ...(isSuperAdmin ? ['import'] : [])] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -978,7 +730,7 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
               textTransform: 'capitalize',
             }}
           >
-            {tab === 'fields' ? 'Custom Fields' : tab === 'audit' ? 'Audit Log' : tab === 'backup' ? 'Backup & Restore' : tab === 'import' ? 'Import Data' : tab === 'email' ? 'Email Config' : tab}
+            {tab === 'fields' ? 'Custom Fields' : tab === 'audit' ? 'Audit Log' : tab === 'backup' ? 'Backup & Restore' : tab === 'import' ? 'Import Data' : tab}
           </button>
         ))}
       </div>
@@ -1087,20 +839,20 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
                 theme={theme}
               />
 
-              {(userForm.role === 'lead' || userForm.role === 'member' || userForm.role === 'guest') && <Field
+              {(userForm.role === 'admin' || userForm.role === 'lead' || userForm.role === 'member') && <Field
                 label="Assigned Project"
                 type="select"
                 value={userForm.projectId}
                 onChange={(v) => updateUserForm('projectId', v, { squadId: '' })}
                 options={projectOptions}
                 placeholder="Select project"
-                required={userForm.role !== 'guest'}
+                required
                 error={userErrors.projectId}
                 disabled={isAdmin}
                 theme={theme}
               />}
 
-              {userForm.role === 'member' && <Field
+              {(userForm.role === 'lead' || userForm.role === 'member') && <Field
                 label="Assigned Squad"
                 type="select"
                 value={userForm.squadId}
@@ -1119,7 +871,6 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
                 onChange={(v) => updateUserForm('reportsTo', v)}
                 options={reportsToOptions}
                 placeholder={reportsToOptions.length ? 'Select manager' : 'No eligible managers'}
-                required
                 error={userErrors.reportsTo}
                 theme={theme}
               />}
@@ -1132,6 +883,35 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
                 onChange={(v) => updateUserForm('jobTitle', v)}
                 theme={theme}
               />
+
+              <Field
+                label="Base Office"
+                type="select"
+                value={userForm.baseOffice || 'Bengaluru'}
+                onChange={(v) => updateUserForm('baseOffice', v as User['baseOffice'])}
+                options={BASE_OFFICE_OPTIONS.map(office => ({ value: office, label: office }))}
+                required
+                theme={theme}
+              />
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={commonStyles.label(theme)}>Birthday (optional)</label>
+                  <select value={userForm.birthdayDay} onChange={e => updateUserForm('birthdayDay', e.target.value)} style={commonStyles.select(theme, true)}>
+                    <option value="">Day</option>
+                    {Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={String(i + 1)}>{i + 1}</option>)}
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={commonStyles.label(theme)}>&nbsp;</label>
+                  <select value={userForm.birthdayMonth} onChange={e => updateUserForm('birthdayMonth', e.target.value)} style={commonStyles.select(theme, true)}>
+                    <option value="">Month</option>
+                    {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map((name, i) =>
+                      <option key={i + 1} value={String(i + 1)}>{name}</option>
+                    )}
+                  </select>
+                </div>
+              </div>
 
               {userForm.role !== 'guest' && <div style={{ gridColumn: '1 / -1', marginTop: '12px' }}>
                 <label style={{ ...commonStyles.label(theme), fontSize: '14px', fontWeight: 600, color: theme.text }}>
@@ -1155,7 +935,7 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
               )}
 
               <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
-                <div style={{ fontSize: '11px', color: theme.muted, marginRight: 'auto' }}>A strong password will be auto-generated. Welcome email sent via EmailJS if enabled.</div>
+                <div style={{ fontSize: '11px', color: theme.muted, marginRight: 'auto' }}>A strong password will be auto-generated. Share it securely with the user.</div>
                 <button type="submit" style={commonStyles.button(theme, 'primary')}>
                   Add User Account
                 </button>
@@ -1176,6 +956,7 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
                     <th style={commonStyles.th(theme)}>Role</th>
                     <th style={commonStyles.th(theme)}>Squad Assigned</th>
                     {isSuperAdmin && <th style={commonStyles.th(theme)}>Project</th>}
+                    <th style={commonStyles.th(theme)}>Base Office</th>
                     <th style={commonStyles.th(theme)}>Permissions</th>
                     <th style={commonStyles.th(theme)}>Actions</th>
                   </tr>
@@ -1205,6 +986,19 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
                           </td>
                           <td style={commonStyles.td(theme)}>{squadMap.get(u.squadId || '') || '—'}</td>
                           {isSuperAdmin && <td style={commonStyles.td(theme)}>{projectMap.get(u.projectId || '') || 'All Projects'}</td>}
+                          <td style={commonStyles.td(theme)}>
+                            {canEditSettings && u.id !== 'superadmin' ? (
+                              <select
+                                value={u.baseOffice || 'Bengaluru'}
+                                onChange={event => handleBaseOfficeChange(u.id, event.target.value as User['baseOffice'])}
+                                style={{ ...commonStyles.select(theme, true), minWidth: 120, fontSize: 12 }}
+                              >
+                                {BASE_OFFICE_OPTIONS.map(office => <option key={office} value={office}>{office}</option>)}
+                              </select>
+                            ) : (
+                              u.baseOffice || 'Bengaluru'
+                            )}
+                          </td>
                           <td style={commonStyles.td(theme)}>
                             {renderPermissionsSummary(u)}
                           </td>
@@ -1267,7 +1061,7 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
                         </tr>
                         {isEditing && editingPermissionsVal && (
                           <tr>
-                            <td colSpan={isSuperAdmin ? 6 : 5} style={{ ...commonStyles.td(theme), backgroundColor: `${theme.inputBg}cc`, padding: '16px' }}>
+                            <td colSpan={isSuperAdmin ? 7 : 6} style={{ ...commonStyles.td(theme), backgroundColor: `${theme.inputBg}cc`, padding: '16px' }}>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '600px', opacity: 1, overflow: 'hidden', transition: 'max-height 0.3s ease, opacity 0.3s ease' }}>
                                 <h4 style={{ margin: 0, fontSize: '13px', fontWeight: 600, color: theme.text }}>
                                   Edit Page Permissions for <span style={{ color: theme.blue }}>{u.username}</span>
@@ -1630,114 +1424,6 @@ export function Settings({ currentUser, appState, setAppState, showToast, theme,
                 )}
               </tbody>
             </table>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'email' && isSuperAdmin && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div style={commonStyles.card(theme)}>
-            <h3 style={{ fontSize: '16px', fontWeight: 600, color: theme.text, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Mail size={18} style={{ color: theme.blue }} />
-              EmailJS Integration
-            </h3>
-            <p style={{ fontSize: '12px', color: theme.muted, marginBottom: '16px' }}>
-              Send automated emails via EmailJS (Gmail). No backend required. Free tier: 200 emails/month.
-            </p>
-            <details style={{ marginBottom: '16px', border: `1px solid ${theme.border}`, borderRadius: '8px', padding: '12px', backgroundColor: theme.inputBg }}>
-              <summary style={{ cursor: 'pointer', fontWeight: 700, fontSize: '13px' }}>Setup Guide</summary>
-              <div style={{ marginTop: '10px', fontSize: '12px', lineHeight: 1.6, color: theme.text }}>
-                <strong>STEP 1 — Create EmailJS Account</strong><br />
-                Go to <a href="https://www.emailjs.com" target="_blank" rel="noopener noreferrer" style={{ color: theme.blue }}>https://www.emailjs.com</a> → Sign Up (free)<br /><br />
-                <strong>STEP 2 — Add Gmail Service</strong><br />
-                Dashboard → Email Services → Add New Service<br />
-                Select Gmail → Connect your Google account<br />
-                Copy the SERVICE ID shown (format: service_xxxxxxx)<br /><br />
-                <strong>STEP 3 — Create Email Templates</strong><br />
-                Dashboard → Email Templates → Create New Template<br />
-                Create 5 templates — one for each email type<br />
-                Use the variable names listed in the template spec<br />
-                Copy each TEMPLATE ID (format: template_xxxxxxx)<br /><br />
-                <strong>STEP 4 — Get Your Public Key</strong><br />
-                Dashboard → Account → General<br />
-                Copy the PUBLIC KEY shown<br /><br />
-                <strong>STEP 5 — Enter Details in QA Hub</strong><br />
-                Paste Service ID, Template IDs, and Public Key into the fields below<br />
-                Set your App URL<br />
-                Toggle Enable EmailJS Integration ON<br />
-                Click Save Configuration<br />
-                Click "Send Test Email" to verify it works
-              </div>
-            </details>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
-                <input type="checkbox" checked={appState.emailConfig?.enabled || false} onChange={(e) => setAppState(prev => ({ ...prev, emailConfig: { ...prev.emailConfig, enabled: e.target.checked } }))} style={{ width: '16px', height: '16px' }} />
-                Enable EmailJS Integration
-              </label>
-              {appState.emailConfig?.enabled && appState.emailConfig?.publicKey && appState.emailConfig?.serviceId ? (
-                <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', backgroundColor: '#22c55e18', color: '#22c55e', fontWeight: 700 }}>✓ EmailJS Connected</span>
-              ) : appState.emailConfig?.enabled ? (
-                <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', backgroundColor: '#ef444418', color: '#ef4444', fontWeight: 700 }}>⚠ Configuration incomplete</span>
-              ) : (
-                <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', backgroundColor: `${theme.muted}18`, color: theme.muted, fontWeight: 700 }}>Email sending disabled</span>
-              )}
-            </div>
-            <form onSubmit={handleSaveEmailConfig} style={{ display: 'grid', gap: '14px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
-                <Field label="EmailJS Public Key" type="text" placeholder="your_public_key_here" value={appState.emailConfig?.publicKey || ''} onChange={(v) => setAppState(prev => ({ ...prev, emailConfig: { ...prev.emailConfig, publicKey: v } }))} required={appState.emailConfig?.enabled} theme={theme} helper="Found in EmailJS Account → General → Public Key" />
-                <Field label="Service ID" type="text" placeholder="service_xxxxxxx" value={appState.emailConfig?.serviceId || ''} onChange={(v) => setAppState(prev => ({ ...prev, emailConfig: { ...prev.emailConfig, serviceId: v } }))} required={appState.emailConfig?.enabled} theme={theme} helper="Found in EmailJS → Email Services → your Gmail service" />
-                <Field label="App URL" type="url" placeholder="https://your-app-url.com" value={appState.emailConfig?.appUrl || ''} onChange={(v) => setAppState(prev => ({ ...prev, emailConfig: { ...prev.emailConfig, appUrl: v } }))} theme={theme} helper="Used as {{app_url}} in email templates" />
-                <Field label="Sender Name" type="text" placeholder="QA Hub" value={appState.emailConfig?.senderName || 'QA Hub'} onChange={(v) => setAppState(prev => ({ ...prev, emailConfig: { ...prev.emailConfig, senderName: v || 'QA Hub' } }))} theme={theme} helper="Display name in the From field" />
-                <Field label="Reply-To Email" type="email" placeholder="replies@company.com" value={appState.emailConfig?.replyTo || ''} onChange={(v) => setAppState(prev => ({ ...prev, emailConfig: { ...prev.emailConfig, replyTo: v } }))} theme={theme} helper="Where replies to automated emails go" />
-              </div>
-              <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '14px' }}>
-                <h4 style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: 700, color: theme.text }}>Template IDs</h4>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
-                  <Field label="Welcome Email Template" type="text" placeholder="template_xxxxxxx" value={appState.emailConfig?.templates?.welcome || ''} onChange={(v) => setAppState(prev => ({ ...prev, emailConfig: { ...prev.emailConfig, templates: { ...prev.emailConfig.templates, welcome: v } } }))} required={appState.emailConfig?.enabled} theme={theme} helper="Sent when a new user is created" />
-                  <Field label="Weekly Summary Template" type="text" placeholder="template_xxxxxxx" value={appState.emailConfig?.templates?.weeklySummary || ''} onChange={(v) => setAppState(prev => ({ ...prev, emailConfig: { ...prev.emailConfig, templates: { ...prev.emailConfig.templates, weeklySummary: v } } }))} required={appState.emailConfig?.enabled} theme={theme} helper="Sent every Friday to Admin/Lead" />
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                <button type="button" onClick={handleSendTestEmail} style={commonStyles.button(theme, 'secondary')}><Send size={14} /> Send Test Email</button>
-                <button type="submit" style={commonStyles.button(theme, 'primary')}><Save size={14} /> Save Configuration</button>
-              </div>
-            </form>
-          </div>
-          <div style={commonStyles.card(theme)}>
-            <details>
-              <summary style={{ cursor: 'pointer', fontWeight: 700, fontSize: '13px' }}>Email Send History ({appState.emailLog?.length || 0})</summary>
-              <div style={{ marginTop: '12px', overflowX: 'auto', maxHeight: '400px', overflowY: 'auto' }}>
-                <table style={commonStyles.table(theme)}>
-                  <thead>
-                    <tr style={{ backgroundColor: theme.inputBg }}>
-                      <th style={commonStyles.th(theme)}>Date/Time</th>
-                      <th style={commonStyles.th(theme)}>Type</th>
-                      <th style={commonStyles.th(theme)}>Recipient</th>
-                      <th style={commonStyles.th(theme)}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(appState.emailLog || []).slice(0, 20).map((entry) => (
-                      <tr key={entry.id}>
-                        <td style={commonStyles.td(theme)}>{formatDateTime(entry.sentAt)}</td>
-                        <td style={{ ...commonStyles.td(theme), textTransform: 'capitalize' }}>{entry.templateType.replace(/([A-Z])/g, ' $1')}</td>
-                        <td style={commonStyles.td(theme)}>{entry.to}</td>
-                        <td style={commonStyles.td(theme)}>
-                          {entry.status === 'sent' ? (
-                            <span style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#22c55e18', color: '#22c55e', fontWeight: 700 }}>Sent</span>
-                          ) : (
-                            <span style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#ef444418', color: '#ef4444', fontWeight: 700 }} title={entry.errorReason || ''}>Failed</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                    {(!appState.emailLog || appState.emailLog.length === 0) && (
-                      <tr><td colSpan={4} style={{ ...commonStyles.td(theme), textAlign: 'center', color: theme.muted, padding: '20px' }}>No emails sent yet.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </details>
           </div>
         </div>
       )}

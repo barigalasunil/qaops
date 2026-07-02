@@ -27,6 +27,7 @@ type FilterState = {
   sitMiss: string;
   employeeId: string;
   sections: ReportKey[];
+  sprintId: string;
 };
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -74,6 +75,7 @@ export function Export({ currentUser, appState, theme, showToast }: ExportProps)
     sitMiss: '',
     employeeId: '',
     sections: ['overall', 'data', 'defects'],
+    sprintId: '',
   });
 
   const projectMap = useMemo(() => new Map(appState.projects.map(project => [project.id, project.name])), [appState.projects]);
@@ -85,6 +87,15 @@ export function Export({ currentUser, appState, theme, showToast }: ExportProps)
     ...appState.releaseEntries.map(entry => entry.releaseName),
   ].filter(Boolean))).sort(), [appState]);
   const years = useMemo(() => Array.from({ length: 5 }, (_, index) => String(now.getFullYear() - 2 + index)), [now]);
+  const latestReleaseEntryByName = useMemo(() => {
+    const map = new Map<string, typeof appState.releaseEntries[number]>();
+    [...appState.releaseEntries]
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+      .forEach(entry => {
+        if (entry.releaseName && !map.has(entry.releaseName)) map.set(entry.releaseName, entry);
+      });
+    return map;
+  }, [appState.releaseEntries]);
 
   const triggerLoading = () => {
     setLoading(true);
@@ -133,32 +144,41 @@ export function Export({ currentUser, appState, theme, showToast }: ExportProps)
     return true;
   };
 
-  const passesScope = (record: { projectId?: string; squadId?: string; release?: string }) => {
+  const passesScope = (record: { projectId?: string; squadId?: string; release?: string; sprintId?: string }) => {
     if (filters.projectId && record.projectId && record.projectId !== filters.projectId) return false;
     if (filters.squadId && record.squadId && record.squadId !== filters.squadId) return false;
     if (filters.release && record.release && record.release !== filters.release) return false;
+    if (filters.sprintId && record.sprintId && record.sprintId !== filters.sprintId) return false;
     return true;
   };
 
   const dataRows = useMemo(() => appState.dataEntries
     .filter(entry => passesDate(entry.date) && passesScope(entry))
     .sort((a, b) => b.date.localeCompare(a.date))
-    .map(entry => ({
-      Date: entry.date,
-      Release: entry.release,
-      Project: projectMap.get(entry.projectId) || 'Unknown',
-      Squad: squadMap.get(entry.squadId) || 'Unknown',
-      Story: entry.jiraStorySummary,
-      Story_Link: entry.jiraStoryLink,
-      Status: entry.storyStatus || 'In Progress',
-      TC_Mode: entry.tcExecuted === null ? 'TCs Only' : 'Full',
-      TC_Cr: entry.tcCreated,
-      TC_Ex: entry.tcExecuted ?? '',
-      TC_Pa: entry.tcPassed ?? '',
-      TC_Fa: entry.tcFailed ?? '',
-      projectId: entry.projectId,
-      squadId: entry.squadId,
-    })), [appState.dataEntries, filters, projectMap, squadMap]);
+    .map(entry => {
+      const releaseEntry = latestReleaseEntryByName.get(entry.release);
+      return {
+        Date: entry.date,
+        Release: entry.release,
+        Sprint_Name: entry.sprintName || '',
+        Story_Points: entry.storyPoints ?? '',
+        Total_Story_Points: releaseEntry?.totalStoryPoints ?? '',
+        UAT_Story_Points: releaseEntry?.uatStoryPoints ?? '',
+        Project: projectMap.get(entry.projectId) || 'Unknown',
+        Squad: squadMap.get(entry.squadId) || 'Unknown',
+        Story: entry.jiraStorySummary,
+        Story_Link: entry.jiraStoryLink,
+        Status: entry.storyStatus || 'In Progress',
+        TC_Mode: entry.tcExecuted === null ? 'TCs Only' : 'Full',
+        TC_Cr: entry.tcCreated,
+        TC_Ex: entry.tcExecuted ?? '',
+        TC_Pa: entry.tcPassed ?? '',
+        TC_Fa: entry.tcFailed ?? '',
+        projectId: entry.projectId,
+        squadId: entry.squadId,
+        sprintId: entry.sprintId || '',
+      };
+    }), [appState.dataEntries, filters, latestReleaseEntryByName, projectMap, squadMap]);
 
   const defectRows = useMemo(() => appState.defects
     .filter(defect => passesDate(defect.date) && passesScope(defect))
@@ -168,6 +188,7 @@ export function Export({ currentUser, appState, theme, showToast }: ExportProps)
     .map(defect => ({
       Date: defect.date,
       Release: defect.release,
+      Sprint_Name: defect.sprintName || '',
       Project: projectMap.get(defect.projectId) || 'Unknown',
       Squad: squadMap.get(defect.squadId) || 'Unknown',
       Summary: defect.jiraDefectSummary,
@@ -179,6 +200,7 @@ export function Export({ currentUser, appState, theme, showToast }: ExportProps)
       Resolved_In_Days: defectAge(defect.jiraCreatedDate || defect.date, defect.status, defect.resolvedDate).resolvedInDays,
       projectId: defect.projectId,
       squadId: defect.squadId,
+      sprintId: defect.sprintId || '',
     })), [appState.defects, filters, projectMap, squadMap]);
 
   const releaseRows = useMemo(() => appState.releaseEntries
@@ -191,7 +213,9 @@ export function Export({ currentUser, appState, theme, showToast }: ExportProps)
       Release_Date: release.releaseDate,
       Regression: release.regressionStartDate || '',
       Beta: release.betaDate || '',
-      PROD: release.prodReleaseDate || '',
+      PROD_Release_Date: release.prodReleaseDate || '',
+      Total_Story_Points: release.totalStoryPoints ?? '',
+      UAT_Story_Points: release.uatStoryPoints ?? '',
       projectId: release.projectId,
       squadId: release.squadId,
     })), [appState.releaseEntries, filters, projectMap, squadMap]);
@@ -229,6 +253,8 @@ export function Export({ currentUser, appState, theme, showToast }: ExportProps)
     const passed = dataRows.reduce((sum, row) => sum + Number(row.TC_Pa || 0), 0);
     const failed = dataRows.reduce((sum, row) => sum + Number(row.TC_Fa || 0), 0);
     const sit = defectRows.filter(row => row.SIT_Miss === 'YES').length;
+    const totalStoryPoints = releaseRows.reduce((sum, row) => sum + Number(row.Total_Story_Points || 0), 0);
+    const uatStoryPoints = releaseRows.reduce((sum, row) => sum + Number(row.UAT_Story_Points || 0), 0);
     return {
       Stories: dataRows.length,
       'TC Created': created,
@@ -244,8 +270,11 @@ export function Export({ currentUser, appState, theme, showToast }: ExportProps)
       P1: defectRows.filter(row => row.Priority === 'P1').length,
       P2: defectRows.filter(row => row.Priority === 'P2').length,
       P3: defectRows.filter(row => row.Priority === 'P3').length,
+      'Total Story Points (across filtered entries)': totalStoryPoints,
+      'UAT Applicable Story Points': uatStoryPoints,
+      'UAT Coverage %': totalStoryPoints ? `${Math.round((uatStoryPoints / totalStoryPoints) * 100)}%` : '0%',
     };
-  }, [dataRows, defectRows]);
+  }, [dataRows, defectRows, releaseRows]);
 
   const cleanRows = {
     data: dataRows.map(({ projectId, squadId, ...row }) => row),
@@ -255,7 +284,7 @@ export function Export({ currentUser, appState, theme, showToast }: ExportProps)
   const summaryRows = Object.entries(metrics).map(([Metric, Value]) => ({ Metric, Value }));
   const projectBreakdown = breakdownRows(dataRows, defectRows, 'Project');
   const squadBreakdown = breakdownRows(dataRows, defectRows, 'Squad');
-  const activeFilterCount = [filters.projectId, filters.squadId, filters.release, filters.month, filters.priority, filters.sitMiss, filters.employeeId].filter(Boolean).length;
+  const activeFilterCount = [filters.projectId, filters.squadId, filters.release, filters.month, filters.priority, filters.sitMiss, filters.employeeId, filters.sprintId].filter(Boolean).length;
   const activeCard = reportCards.find(card => card.id === activeReport)!;
   const recordCount = activeReport === 'overall' ? dataRows.length + defectRows.length : activeReport === 'data' ? dataRows.length : activeReport === 'defects' ? defectRows.length : activeReport === 'releases' ? releaseRows.length : activeReport === 'timesheet' ? timesheetSummary.length : activeReport === 'weekly' ? summaryRows.length : builderSections().reduce((sum, section) => sum + section.rows.length, 0);
   const canPdf = activeReport !== 'data' && activeReport !== 'timesheet' && activeReport !== 'weekly';
@@ -353,7 +382,7 @@ export function Export({ currentUser, appState, theme, showToast }: ExportProps)
       return acc;
     }, {});
     const monthGroups = Object.entries(grouped) as [string, Record<string, any>[]][];
-    return <div style={{ display: 'grid', gap: '10px' }}>{monthGroups.sort(([a], [b]) => b.localeCompare(a)).map(([month, rows]) => <details key={month} open style={{ border: `1px solid ${theme.border}`, borderRadius: '8px', backgroundColor: theme.inputBg, padding: '10px' }}><summary style={{ cursor: 'pointer', fontWeight: 900 }}>{month} ({rows.length})</summary>{rows.map(row => <div key={row.Release + row.Release_Date + generateId()} style={{ display: 'grid', gridTemplateColumns: 'minmax(160px, 220px) 1fr', gap: '12px', alignItems: 'center', padding: '10px 0', borderTop: `1px solid ${theme.border}` }}><div><span style={commonStyles.badge(theme, theme.blue)}>{row.Release}</span><div style={{ marginTop: '5px', fontSize: '11px', color: theme.muted }}>{row.Project} · {row.Squad}</div></div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', alignItems: 'center' }}>{['Release_Date', 'Regression', 'Beta', 'PROD'].map(key => <div key={key} style={{ fontSize: '11px', color: row[key] ? theme.text : theme.muted }}><span style={{ display: 'inline-block', width: '9px', height: '9px', borderRadius: '50%', backgroundColor: row[key] ? theme.green : 'transparent', border: `1px solid ${row[key] ? theme.green : theme.muted}`, marginRight: '5px' }} />{row[key] || 'Not set'}</div>)}</div></div>)}</details>)}</div>;
+    return <div style={{ display: 'grid', gap: '10px' }}>{monthGroups.sort(([a], [b]) => b.localeCompare(a)).map(([month, rows]) => <details key={month} open style={{ border: `1px solid ${theme.border}`, borderRadius: '8px', backgroundColor: theme.inputBg, padding: '10px' }}><summary style={{ cursor: 'pointer', fontWeight: 900 }}>{month} ({rows.length})</summary>{rows.map(row => <div key={row.Release + row.Release_Date + generateId()} style={{ display: 'grid', gridTemplateColumns: 'minmax(160px, 220px) 1fr', gap: '12px', alignItems: 'center', padding: '10px 0', borderTop: `1px solid ${theme.border}` }}><div><span style={commonStyles.badge(theme, theme.blue)}>{row.Release}</span><div style={{ marginTop: '5px', fontSize: '11px', color: theme.muted }}>{row.Project} · {row.Squad}</div><div style={{ marginTop: '5px', fontSize: '11px', color: theme.text, fontWeight: 800 }}>SP: {row.Total_Story_Points || '—'} total · {row.UAT_Story_Points || '—'} UAT</div></div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', alignItems: 'center' }}>{['Release_Date', 'Regression', 'Beta', 'PROD_Release_Date'].map(key => <div key={key} style={{ fontSize: '11px', color: row[key] ? theme.text : theme.muted }}><span style={{ display: 'inline-block', width: '9px', height: '9px', borderRadius: '50%', backgroundColor: row[key] ? theme.green : 'transparent', border: `1px solid ${row[key] ? theme.green : theme.muted}`, marginRight: '5px' }} />{row[key] || 'Not set'}</div>)}</div></div>)}</details>)}</div>;
   };
 
   const renderTimesheet = () => {
@@ -491,6 +520,7 @@ export function Export({ currentUser, appState, theme, showToast }: ExportProps)
         {showProject && <CompactSelect label="Project" value={filters.projectId} onChange={value => setFilter('projectId', value)} options={appState.projects.map(project => ({ value: project.id, label: project.name }))} all="All Projects" disabled={currentUser.role !== 'superadmin'} />}
         <CompactSelect label="Squad" value={filters.squadId} onChange={value => setFilter('squadId', value)} options={appState.squads.filter(squad => !filters.projectId || squad.projectId === filters.projectId).map(squad => ({ value: squad.id, label: squad.name }))} all="All Squads" />
         {showRelease && <CompactSelect label="Release" value={filters.release} onChange={value => setFilter('release', value)} options={releaseOptions.map(release => ({ value: release, label: release }))} all="All Releases" />}
+        {(appState.sprints || []).length > 0 && <CompactSelect label="Sprint" value={filters.sprintId} onChange={value => setFilter('sprintId', value)} options={[...(appState.sprints || [])].sort((a, b) => b.startDate.localeCompare(a.startDate)).map(s => ({ value: s.id, label: `${s.name} (${new Date(s.startDate+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'})} – ${new Date(s.endDate+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})})` }))} all="All Sprints" />}
         <CompactSelect label="Year" value={filters.year} onChange={value => setFilter('year', value)} options={years.map(year => ({ value: year, label: year }))} />
         <CompactSelect label="Month" value={filters.month} onChange={value => setFilter('month', value)} options={MONTHS.map((month, index) => ({ value: String(index + 1), label: month }))} all="All Months" />
         {showPriority && <CompactSelect label="Priority" value={filters.priority} onChange={value => setFilter('priority', value)} options={['P1', 'P2', 'P3'].map(value => ({ value, label: value }))} all="All Priorities" />}

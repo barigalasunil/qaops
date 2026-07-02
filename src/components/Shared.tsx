@@ -6,7 +6,8 @@
 import React, { useMemo } from 'react';
 import { Filter, X, Check, AlertTriangle } from 'lucide-react';
 import { ThemeTokens, commonStyles } from '../theme';
-import { Project, Squad, AppState } from '../types';
+import { Project, Squad, Sprint } from '../types';
+import { formatDate } from '../utils';
 
 // Toast Notification
 interface ToastProps {
@@ -141,6 +142,8 @@ interface FieldProps {
   theme: ThemeTokens;
   error?: string;
   disabled?: boolean;
+  helper?: string;
+  min?: number;
 }
 
 export function Field({
@@ -153,7 +156,9 @@ export function Field({
   required = false,
   theme,
   error,
-  disabled
+  disabled,
+  helper,
+  min,
 }: FieldProps) {
   if (type === 'checkbox') {
     return (
@@ -202,6 +207,7 @@ export function Field({
           type={type}
           value={value === undefined || value === null ? '' : value}
           onChange={(e) => onChange(type === 'number' ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value)}
+          min={type === 'number' ? min : undefined}
           placeholder={placeholder}
           required={required}
           disabled={disabled}
@@ -214,6 +220,7 @@ export function Field({
         />
       )}
       {error && <span style={{ color: '#ef4444', fontSize: '11px', marginTop: '3px' }}>{error}</span>}
+      {helper && !error && <span style={{ color: '#94a3b8', fontSize: '10px', marginTop: '3px' }}>{helper}</span>}
     </div>
   );
 }
@@ -225,24 +232,27 @@ interface FilterBarProps {
   dataEntries: any[];
   defects: any[];
   releaseNames?: { id: string; name: string }[];
+  sprints?: Sprint[];
   filters: {
     projectId: string;
     squadId: string;
     release: string;
     month: string;
+    sprintId?: string;
   };
   setFilters: React.Dispatch<React.SetStateAction<{
     projectId: string;
     squadId: string;
     release: string;
     month: string;
+    sprintId?: string;
   }>>;
   theme: ThemeTokens;
   showProject?: boolean;
   lockedProjectId?: string;
 }
 
-export function FilterBar({ projects, squads, dataEntries, defects, releaseNames = [], filters, setFilters, theme, showProject = true, lockedProjectId }: FilterBarProps) {
+export function FilterBar({ projects, squads, dataEntries, defects, releaseNames = [], sprints = [], filters, setFilters, theme, showProject = true, lockedProjectId }: FilterBarProps) {
   // Extract distinct release names from dataEntries and defects, combined with master releaseNames
   const distinctReleases = useMemo(() => {
     const releasesSet = new Set<string>();
@@ -264,10 +274,10 @@ export function FilterBar({ projects, squads, dataEntries, defects, releaseNames
     return Array.from(monthsSet).sort().reverse();
   }, [dataEntries, defects]);
 
-  const hasActiveFilters = filters.projectId || filters.squadId || filters.release || filters.month;
+  const hasActiveFilters = filters.projectId || filters.squadId || filters.release || filters.sprintId || filters.month;
 
   const handleClear = () => {
-    setFilters({ projectId: lockedProjectId || '', squadId: '', release: '', month: '' });
+    setFilters(previous => ({ ...previous, projectId: lockedProjectId || '', squadId: '', release: '', sprintId: '', month: '' }));
   };
 
   return (
@@ -331,6 +341,23 @@ export function FilterBar({ projects, squads, dataEntries, defects, releaseNames
           ))}
         </select>
       </div>
+
+      {/* Sprint Selector */}
+      {sprints.length > 0 && <div style={{ flex: '0 1 auto', minWidth: '160px' }}>
+        <label style={{ ...commonStyles.label(theme), fontSize: '10px', marginBottom: '2px' }}>Sprint</label>
+        <select
+          value={filters.sprintId || ''}
+          onChange={(e) => setFilters(prev => ({ ...prev, sprintId: e.target.value }))}
+          style={commonStyles.select(theme)}
+        >
+          <option value="">All Sprints</option>
+          {sprints.slice().sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()).map(sp => (
+            <option key={sp.id} value={sp.id}>
+              {sp.name} ({formatDate(sp.startDate)} – {formatDate(sp.endDate)})
+            </option>
+          ))}
+        </select>
+      </div>}
 
       {/* Month Selector */}
       <div style={{ flex: '0 1 auto', minWidth: '120px' }}>

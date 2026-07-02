@@ -400,7 +400,7 @@ export function Announcements({ currentUser, appState, setAppState, showToast, t
       })}
       {confirmDeleteId && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '32px 28px', width: '100%', maxWidth: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.4)' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '32px 28px', width: '100%', maxWidth: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.4)' }}>
             <h3 style={{ margin: '0 0 12px', fontSize: '18px' }}>Delete Announcement?</h3>
             <p style={{ fontSize: '14px', color: theme.text, margin: '0 0 24px' }}>Are you sure you want to delete this announcement? This cannot be undone.</p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>

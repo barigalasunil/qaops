@@ -27,6 +27,7 @@ const DATA_FIELDS: KnownField[] = [
   { field: 'squadId', label: 'Squad ID', required: true },
   { field: 'jiraStoryLink', label: 'Jira Story Link', required: true },
   { field: 'jiraStorySummary', label: 'Jira Story Summary', required: true },
+  { field: 'storyPoints', label: 'Story Points', required: false },
   { field: 'tcCreated', label: 'TC Created', required: false },
   { field: 'tcExecuted', label: 'TC Executed', required: false },
   { field: 'tcPassed', label: 'TC Passed', required: false },
@@ -87,6 +88,8 @@ const FIELD_ALIASES: Record<string, string> = {
   storysummary: 'jiraStorySummary',
   story_summary: 'jiraStorySummary',
   jira_story_summary: 'jiraStorySummary',
+  storypoints: 'storyPoints',
+  story_points: 'storyPoints',
   tccreated: 'tcCreated',
   tc_created: 'tcCreated',
   tcexecuted: 'tcExecuted',
@@ -335,6 +338,7 @@ export function BulkImport({ currentUser, appState, setAppState, showToast, them
               squadId: entry.squadId || '',
               jiraStoryLink: entry.jiraStoryLink || '',
               jiraStorySummary: sanitise(entry.jiraStorySummary || ''),
+              storyPoints: entry.storyPoints === '' || entry.storyPoints === undefined || entry.storyPoints === null ? null : Number(entry.storyPoints),
               tcCreated: Number(entry.tcCreated) || 0,
               tcExecuted: entry.tcExecuted ? Number(entry.tcExecuted) : null,
               tcPassed: entry.tcPassed ? Number(entry.tcPassed) : null,
@@ -346,6 +350,8 @@ export function BulkImport({ currentUser, appState, setAppState, showToast, them
               lastEditedBy: null,
               lastEditedAt: null,
               lastEditedByRole: null,
+              sprintId: '',
+              sprintName: '',
             });
             imported++;
           });
@@ -406,6 +412,8 @@ export function BulkImport({ currentUser, appState, setAppState, showToast, them
               notes: sanitise(entry.notes || ''),
               addedBy: currentUser.id,
               addedByName: currentUser.username,
+              sprintId: '',
+              sprintName: '',
             });
             imported++;
           });
@@ -528,6 +536,8 @@ export function BulkImport({ currentUser, appState, setAppState, showToast, them
                 loginCount: 0,
                 failedLoginAttempts: 0,
                 lockedUntil: null,
+                birthday: null,
+                loginCountWithoutBirthday: 0,
                 directReports: [],
               });
               imported++;
